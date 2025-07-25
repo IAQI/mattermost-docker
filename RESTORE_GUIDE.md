@@ -1,21 +1,75 @@
 # Mattermost Database and Data Restoration Guide
 
-This guide documents the process of restoring a Mattermost instance from backups, including PostgreSQL database and Mattermost data files.
+This guide documents the process of restoring a Mattermost instance from backups, including PostgreSQL database, Mattermost data files, and configuration.
 
 ## Backup Files Overview
 
-- **Database Backup:** `all_databases_backup.sql` - PostgreSQL cluster dump
-- **Data Backup:** `mattermost_data.tar.gz` - Mattermost application data and files
+Our automated backup system creates timestamped backup directories with:
+
+- **Database Backup:** `mattermost_db_backup_YYYYMMDD_HHMMSS.sql` - PostgreSQL database dump
+- **Data Backup:** `mattermost_data_backup_YYYYMMDD_HHMMSS.tar.gz` - Mattermost application data and files  
+- **Config Backup:** `mattermost_config_backup_YYYYMMDD_HHMMSS.tar.gz` - Configuration files
+- **Summary:** `backup_summary_YYYYMMDD_HHMMSS.txt` - Backup verification report
+
+## Backup Locations
+
+- **Local Backups:** `/home/ubuntu/backups/YYYYMMDD_HHMMSS/`
+- **Cloud Backups:** SwissBackup storage via rclone (`swissbackup:mattermost-backups`)
 
 ## Prerequisites
 
 - Existing Mattermost Docker setup running
-- Backup files available in `/home/ubuntu/db_backup/`
+- Backup files available locally or accessible via rclone
 - Administrative access to the server
+- rclone configured for SwissBackup (if restoring from cloud)
 
 ## Restoration Process
 
-### Step 1: Stop Mattermost Services
+### Step 0: Download Backup from SwissBackup (if needed)
+
+If you need to restore from cloud storage instead of local backups:
+
+```bash
+# List available backups in SwissBackup
+rclone ls swissbackup:mattermost-backups
+
+# List backup directories
+rclone lsf swissbackup:mattermost-backups --dirs-only
+
+# Download specific backup (replace YYYYMMDD_HHMMSS with desired backup)
+BACKUP_DATE="20250725_103415"  # Example: Use latest or desired backup date
+rclone sync swissbackup:mattermost-backups/$BACKUP_DATE /home/ubuntu/backups/$BACKUP_DATE --progress
+
+# Verify download
+ls -la /home/ubuntu/backups/$BACKUP_DATE/
+```
+
+### Step 1: Choose and Verify Backup
+
+Select the backup you want to restore from:
+
+```bash
+# List available local backups
+ls -la /home/ubuntu/backups/
+
+# Choose backup directory (use latest or desired backup)
+BACKUP_DATE="20250725_103415"  # Replace with your chosen backup
+BACKUP_DIR="/home/ubuntu/backups/$BACKUP_DATE"
+
+# Verify backup completeness
+echo "Checking backup: $BACKUP_DIR"
+ls -la "$BACKUP_DIR/"
+ls -la "$BACKUP_DIR/database/"
+ls -la "$BACKUP_DIR/data/"
+ls -la "$BACKUP_DIR/config/"
+
+# Check backup summary if available
+if [ -f "$BACKUP_DIR/backup_summary_$BACKUP_DATE.txt" ]; then
+    cat "$BACKUP_DIR/backup_summary_$BACKUP_DATE.txt"
+fi
+```
+
+### Step 2: Stop Mattermost Services
 
 First, stop the Mattermost application while keeping the database running for restoration:
 
@@ -29,7 +83,21 @@ sudo docker stop docker-mattermost-1
 sudo docker ps
 ```
 
-### Step 2: Backup Current Data (Safety Measure)
+### Step 2: Stop Mattermost Services
+
+First, stop the Mattermost application while keeping the database running for restoration:
+
+```bash
+cd /home/ubuntu/docker
+
+# Stop only the Mattermost container
+sudo docker stop docker-mattermost-1
+
+# Verify only postgres and nginx are running
+sudo docker ps
+```
+
+### Step 3: Backup Current Data (Safety Measure)
 
 Before restoring, create a backup of the current installation:
 
@@ -43,29 +111,26 @@ sudo docker exec docker-postgres-1 pg_dumpall -U mmuser > \
   /home/ubuntu/current_db_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
-### Step 3: Clear Current Database
-
-Remove existing database content to prepare for restoration:
-
-```bash
-# Connect to PostgreSQL and drop/recreate the database
-sudo docker exec -it docker-postgres-1 psql -U mmuser -d postgres -c "DROP DATABASE IF EXISTS mattermost;"
-sudo docker exec -it docker-postgres-1 psql -U mmuser -d postgres -c "CREATE DATABASE mattermost;"
-```
-
 ### Step 4: Restore Database from Backup
 
 Restore the PostgreSQL database from the backup file:
 
 ```bash
+# Set backup directory variable (from Step 1)
+BACKUP_DIR="/home/ubuntu/backups/$BACKUP_DATE"
+
+# Clear current database
+sudo docker exec -it docker-postgres-1 psql -U mmuser -d postgres -c "DROP DATABASE IF EXISTS mattermost;"
+sudo docker exec -it docker-postgres-1 psql -U mmuser -d postgres -c "CREATE DATABASE mattermost;"
+
 # Copy backup file to container for easier access
-sudo docker cp /home/ubuntu/db_backup/all_databases_backup.sql docker-postgres-1:/tmp/
+sudo docker cp "$BACKUP_DIR/database/mattermost_db_backup_$BACKUP_DATE.sql" docker-postgres-1:/tmp/
 
 # Restore the database
-sudo docker exec -i docker-postgres-1 psql -U mmuser -d postgres < /home/ubuntu/db_backup/all_databases_backup.sql
+sudo docker exec -i docker-postgres-1 psql -U mmuser -d mattermost < "$BACKUP_DIR/database/mattermost_db_backup_$BACKUP_DATE.sql"
 
 # Alternative method if the above doesn't work:
-# sudo docker exec -i docker-postgres-1 psql -U mmuser -d postgres -f /tmp/all_databases_backup.sql
+# sudo docker exec -i docker-postgres-1 psql -U mmuser -d mattermost -f /tmp/mattermost_db_backup_$BACKUP_DATE.sql
 ```
 
 ### Step 5: Restore Mattermost Data Files
@@ -76,35 +141,57 @@ Replace current Mattermost data with backup data:
 # Stop nginx temporarily to avoid conflicts
 sudo docker stop nginx_mattermost
 
-# Remove current data (we have backup from Step 2)
-sudo rm -rf ./volumes/app/mattermost/*
+# Remove current data (we have backup from Step 3)
+sudo rm -rf ./volumes/app/mattermost/data/*
+sudo rm -rf ./volumes/app/mattermost/logs/*
+sudo rm -rf ./volumes/app/mattermost/plugins/*
 
 # Extract backup data
-cd ./volumes/app/mattermost/
-sudo tar -xzf /home/ubuntu/db_backup/mattermost_data.tar.gz --strip-components=1
+sudo tar -xzf "$BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/ --strip-components=1
 
 # Fix ownership for Mattermost container (user 2000)
-sudo chown -R 2000:2000 /home/ubuntu/docker/volumes/app/mattermost/
+sudo chown -R 2000:2000 ./volumes/app/mattermost/
 
-# Return to docker directory
-cd /home/ubuntu/docker
+echo "Data restoration completed from: $BACKUP_DIR/data/"
 ```
 
-### Step 6: Update Configuration
+### Step 6: Restore Configuration Files
 
-Ensure the restored Mattermost configuration matches your current environment:
+Restore the Mattermost configuration:
+
+```bash
+# Backup current config as additional safety measure
+sudo cp ./volumes/app/mattermost/config/config.json ./volumes/app/mattermost/config/config.json.backup
+
+# Extract configuration backup
+sudo tar -xzf "$BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/ --strip-components=1
+
+# Fix ownership
+sudo chown -R 2000:2000 ./volumes/app/mattermost/config/
+
+echo "Configuration restored from: $BACKUP_DIR/config/"
+```
+
+### Step 7: Update Configuration (if needed)
+
+### Step 7: Update Configuration (if needed)
+
+Verify and update the restored Mattermost configuration to match your current environment:
 
 ```bash
 # Check current configuration
 sudo cat ./volumes/app/mattermost/config/config.json | grep -A 5 -B 5 "DataSource\|SiteURL"
 
-# If needed, update database connection string and site URL
-# The database connection should match your .env file settings:
-# "postgres://mmuser:mmuser_password@postgres:5432/mattermost?sslmode=disable&connect_timeout=10"
-# SiteURL should be: "https://mattermost.iaqi.org"
+# If needed, update database connection string and site URL using the config manager
+./scripts/config-manager.sh
+
+# Or manually verify key settings:
+# - SqlSettings.DataSource should be: "postgres://mmuser:mmuser_password@postgres:5432/mattermost?sslmode=disable&connect_timeout=10"
+# - ServiceSettings.SiteURL should be: "https://mattermost.iaqi.org"
+# - FileSettings.Directory should be: "./data/"
 ```
 
-### Step 7: Restart All Services
+### Step 8: Restart All Services
 
 Start all containers using Docker Compose:
 
@@ -122,7 +209,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml ps
 sudo docker logs docker-mattermost-1 --tail 20
 ```
 
-### Step 8: Verify Restoration
+### Step 9: Verify Restoration
 
 Confirm the restoration was successful:
 
@@ -136,11 +223,76 @@ sudo docker logs docker-mattermost-1 --tail 50
 # Test database connectivity
 sudo docker exec docker-postgres-1 psql -U mmuser -d mattermost -c "\dt" | head -10
 
+# Verify backup restore details
+echo "Restored from backup: $BACKUP_DATE"
+echo "Database: $BACKUP_DIR/database/mattermost_db_backup_$BACKUP_DATE.sql"
+echo "Data: $BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz"
+echo "Config: $BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz"
+
 # Access Mattermost web interface
 echo "Visit: https://mattermost.iaqi.org"
 ```
 
+## Cloud Backup Management
+
+### Listing Available Cloud Backups
+
+```bash
+# List all backup directories in SwissBackup
+rclone lsf swissbackup:mattermost-backups --dirs-only
+
+# Get detailed listing with sizes and dates
+rclone ls swissbackup:mattermost-backups
+
+# Check specific backup contents
+BACKUP_DATE="20250725_103415"  # Replace with desired backup
+rclone ls swissbackup:mattermost-backups/$BACKUP_DATE
+```
+
+### Downloading Specific Files
+
+```bash
+# Download only database backup
+rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/database/ /home/ubuntu/temp-restore/database/
+
+# Download only data backup  
+rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/data/ /home/ubuntu/temp-restore/data/
+
+# Download only config backup
+rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/config/ /home/ubuntu/temp-restore/config/
+```
+
+### Verifying Cloud Backup Integrity
+
+```bash
+# Download and check backup summary
+rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/backup_summary_$BACKUP_DATE.txt /tmp/
+cat /tmp/backup_summary_$BACKUP_DATE.txt
+
+# Compare file sizes between local and cloud
+echo "Local backup size:"
+du -sh /home/ubuntu/backups/$BACKUP_DATE/ 2>/dev/null || echo "Not available locally"
+
+echo "Cloud backup size:"
+rclone size swissbackup:mattermost-backups/$BACKUP_DATE
+```
+
 ## Troubleshooting
+
+### SwissBackup Connection Issues
+
+If you can't access SwissBackup:
+
+```bash
+# Test rclone connection
+rclone config show swissbackup
+
+# Test connectivity
+rclone lsf swissbackup:mattermost-backups --dirs-only
+
+# If connection fails, reconfigure rclone
+rclone config
+```
 
 ### Database Connection Issues
 
@@ -160,13 +312,35 @@ sudo docker exec docker-postgres-1 psql -U mmuser -d postgres -c "\du"
 If configuration doesn't match:
 
 ```bash
-# Edit config.json manually
+# Use the config manager for safe editing
+./scripts/config-manager.sh
+
+# Or edit config.json manually
 sudo nano ./volumes/app/mattermost/config/config.json
 
 # Key settings to verify:
 # - SqlSettings.DataSource
-# - ServiceSettings.SiteURL
+# - ServiceSettings.SiteURL  
 # - FileSettings.Directory (should be "./data/")
+```
+
+### Backup File Issues
+
+If backup files seem corrupted or incomplete:
+
+```bash
+# Check backup summary for verification
+cat "$BACKUP_DIR/backup_summary_$BACKUP_DATE.txt"
+
+# Verify archive integrity
+tar -tzf "$BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz" >/dev/null && echo "Data archive OK" || echo "Data archive corrupted"
+tar -tzf "$BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz" >/dev/null && echo "Config archive OK" || echo "Config archive corrupted"
+
+# Check database backup
+head -20 "$BACKUP_DIR/database/mattermost_db_backup_$BACKUP_DATE.sql"
+
+# Try an alternative backup date if current one is problematic
+ls -la /home/ubuntu/backups/
 ```
 
 ### Permission Issues
@@ -249,8 +423,40 @@ sudo chown -R 2000:2000 ./volumes/app/mattermost/
 sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
 ```
 
+## Quick Restoration Commands
+
+For experienced users, here's a condensed restoration sequence:
+
+```bash
+# Set variables
+BACKUP_DATE="20250725_103415"  # Replace with desired backup
+BACKUP_DIR="/home/ubuntu/backups/$BACKUP_DATE"
+
+# Download from cloud if needed
+# rclone sync swissbackup:mattermost-backups/$BACKUP_DATE $BACKUP_DIR --progress
+
+# Stop services and backup current state
+cd /home/ubuntu/docker
+sudo docker stop docker-mattermost-1
+sudo tar -czf /home/ubuntu/current_mattermost_backup_$(date +%Y%m%d_%H%M%S).tar.gz ./volumes/app/mattermost/
+sudo docker exec docker-postgres-1 pg_dumpall -U mmuser > /home/ubuntu/current_db_backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore database
+sudo docker exec -it docker-postgres-1 psql -U mmuser -d postgres -c "DROP DATABASE IF EXISTS mattermost; CREATE DATABASE mattermost;"
+sudo docker exec -i docker-postgres-1 psql -U mmuser -d mattermost < "$BACKUP_DIR/database/mattermost_db_backup_$BACKUP_DATE.sql"
+
+# Restore data and config
+sudo rm -rf ./volumes/app/mattermost/data/* ./volumes/app/mattermost/logs/* ./volumes/app/mattermost/plugins/*
+sudo tar -xzf "$BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/ --strip-components=1
+sudo tar -xzf "$BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/ --strip-components=1
+sudo chown -R 2000:2000 ./volumes/app/mattermost/
+
+# Restart all services
+sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
+```
+
 ---
 
-**Restoration Guide Created:** July 22, 2025  
-**Source Backup Location:** `/home/ubuntu/db_backup/`  
+**Restoration Guide Updated:** July 25, 2025  
+**Backup Source:** Local `/home/ubuntu/backups/` and SwissBackup `swissbackup:mattermost-backups`  
 **Target Installation:** Mattermost 10.5.2 Enterprise Edition
