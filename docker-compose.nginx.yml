@@ -14,7 +14,7 @@ services:
       - /var/cache
       - /var/log/nginx
     volumes:
-      - ${NGINX_CONFIG_PATH}:/etc/nginx/conf.d:ro
+      - ${NGINX_CONFIG_PATH}:/etc/nginx/conf.d
       - ${NGINX_DHPARAMS_FILE}:/dhparams4096.pem
       - ${CERT_PATH}:/cert.pem:ro
       - ${KEY_PATH}:/key.pem:ro

@@ -66,6 +66,9 @@ log() {
 error_exit() {
     log "ERROR" "$1"
     
+    # Disable maintenance mode if it was enabled
+    rm -f "$DOCKER_DIR/nginx/conf.d/.maintenance" 2>/dev/null || true
+    
     # Attempt to restart services if they were stopped
     if [[ "${SERVICES_STOPPED:-false}" == "true" ]]; then
         log "INFO" "Attempting to restart services due to error..."
@@ -78,6 +81,9 @@ error_exit() {
 # Cleanup function
 cleanup() {
     log "INFO" "Performing cleanup..."
+    
+    # Disable maintenance mode
+    rm -f "$DOCKER_DIR/nginx/conf.d/.maintenance" 2>/dev/null || true
     
     # Remove temporary files if any were created
     if [[ -n "${TEMP_FILES:-}" ]]; then
@@ -192,56 +198,75 @@ create_backup_dirs() {
     log "INFO" "Created backup directories: $BACKUP_DIR"
 }
 
-# Stop Mattermost services (keep database running)
+# Stop Mattermost services (keep database running) and enable maintenance mode
 stop_services() {
     cd "$DOCKER_DIR"
     
-    log "INFO" "Stopping Mattermost and nginx services..."
+    log "INFO" "Enabling maintenance mode..."
     
-        if docker_cmd compose $COMPOSE_FILES stop mattermost nginx; then
-        SERVICES_STOPPED=true
-        log "SUCCESS" "Services stopped successfully"
+    # Create maintenance flag file
+    if touch "$DOCKER_DIR/nginx/conf.d/.maintenance"; then
+        log "SUCCESS" "Maintenance mode enabled"
         
-        # Wait a moment for services to fully stop
+        # Wait a moment for nginx to pick up the change
+        sleep 2
+    else
+        log "WARN" "Failed to enable maintenance mode, continuing with backup anyway"
+    fi
+    
+    log "INFO" "Stopping Mattermost service..."
+    
+    if docker_cmd compose $COMPOSE_FILES stop mattermost; then
+        SERVICES_STOPPED=true
+        log "SUCCESS" "Mattermost service stopped successfully"
+        
+        # Wait a moment for service to fully stop
         sleep 5
         
-        # Verify only postgres is running
-        if docker_cmd compose $COMPOSE_FILES ps | grep -E "(mattermost|nginx)" | grep -q "Up"; then
-            error_exit "Failed to stop all required services"
+        # Verify mattermost is stopped but nginx and postgres are still running
+        if docker_cmd compose $COMPOSE_FILES ps | grep "mattermost" | grep -q "Up"; then
+            error_exit "Failed to stop Mattermost service"
         fi
     else
-        error_exit "Failed to stop services"
+        error_exit "Failed to stop Mattermost service"
     fi
 }
 
-# Restart all services
+# Restart all services and disable maintenance mode
 restart_services() {
     cd "$DOCKER_DIR"
     
-    log "INFO" "Starting all services..."
+    log "INFO" "Starting Mattermost service..."
     
-    if docker_cmd compose $COMPOSE_FILES up -d; then
+    if docker_cmd compose $COMPOSE_FILES up -d mattermost; then
         SERVICES_STOPPED=false
-        log "SUCCESS" "All services started successfully"
+        log "SUCCESS" "Mattermost service started successfully"
         
-        # Wait for services to be ready
+        # Wait for Mattermost to be ready
         sleep 10
         
-        # Verify services are running
+        # Verify Mattermost is running
         local retries=0
         while [[ $retries -lt 30 ]]; do
-            if docker_cmd compose $COMPOSE_FILES ps | grep -E "(mattermost|nginx|postgres)" | grep -c "Up" | grep -q "3"; then
-                log "SUCCESS" "All services are healthy"
-                return 0
+            if docker_cmd compose $COMPOSE_FILES ps | grep "mattermost" | grep -q "Up"; then
+                log "SUCCESS" "Mattermost service is healthy"
+                break
             fi
             sleep 2
             ((retries++))
         done
         
-        log "WARN" "Services started but health check inconclusive"
+        # Disable maintenance mode
+        log "INFO" "Disabling maintenance mode..."
+        if rm -f "$DOCKER_DIR/nginx/conf.d/.maintenance"; then
+            log "SUCCESS" "Maintenance mode disabled"
+        else
+            log "WARN" "Failed to disable maintenance mode flag"
+        fi
+        
         return 0
     else
-        error_exit "Failed to start services"
+        error_exit "Failed to start Mattermost service"
     fi
 }
 
