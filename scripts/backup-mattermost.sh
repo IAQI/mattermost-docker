@@ -8,8 +8,8 @@
 # - Mattermost data files and uploads
 # - Configuration files and certificates
 #
-# Usage: ./backup-mattermost.sh [retention_days] [--verbose]
-# Example: ./backup-mattermost.sh 7 --verbose
+# Usage: ./backup-mattermost.sh [--verbose]
+# Example: ./backup-mattermost.sh --verbose
 #
 # Created: July 22, 2025
 # Target: Mattermost 10.5.2 Enterprise Edition
@@ -22,8 +22,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_BASE_DIR="/home/ubuntu/backups"
 LOG_FILE="/var/log/mattermost-backup.log"
-RETENTION_DAYS="${1:-7}"  # Default 7 days retention
-VERBOSE="${2:-}"
+VERBOSE="${1:-}"
+
+# Cloud backup settings
+CLOUD_REMOTE="swissbackup:mattermost-backups"
 
 # Docker compose files
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.nginx.yml"
@@ -296,37 +298,38 @@ backup_config() {
     fi
 }
 
-# Clean old backups
+# Simple local cleanup - keep only last 2 backups locally
 cleanup_old_backups() {
-    local retention_days="$1"
+    log "INFO" "Cleaning up old local backups (keeping last 2 for quick access)..."
     
-    log "INFO" "Cleaning up backups older than $retention_days days..."
+    # Get list of backup directories sorted by date (oldest first)
+    local backup_dirs=($(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "20*" | sort))
+    local total_backups=${#backup_dirs[@]}
+    local keep_count=2
     
-    local deleted_count=0
+    if [[ $total_backups -le $keep_count ]]; then
+        log "INFO" "Found $total_backups backups, keeping all (≤ $keep_count)"
+        return 0
+    fi
     
-    # Clean timestamped backup directories
-    find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "20*" -mtime +$retention_days -print0 | \
-    while IFS= read -r -d '' dir; do
+    local delete_count=$((total_backups - keep_count))
+    local deleted=0
+    
+    # Delete oldest backups, keep only the last 2
+    for ((i=0; i<delete_count; i++)); do
+        local dir="${backup_dirs[$i]}"
+        local dir_name=$(basename "$dir")
+        
         if rm -rf "$dir"; then
-            ((deleted_count++))
-            log "INFO" "Deleted old backup directory: $(basename "$dir")"
+            ((deleted++))
+            log "INFO" "Deleted local backup: $dir_name (cloud copy preserved)"
+        else
+            log "WARN" "Failed to delete local backup: $dir_name"
         fi
     done
     
-    # Clean individual backup files in subdirectories
-    for subdir in database data config; do
-        if [[ -d "$BACKUP_BASE_DIR/$subdir" ]]; then
-            find "$BACKUP_BASE_DIR/$subdir" -type f -mtime +$retention_days -print0 | \
-            while IFS= read -r -d '' file; do
-                if rm -f "$file"; then
-                    ((deleted_count++))
-                    log "INFO" "Deleted old backup file: $(basename "$file")"
-                fi
-            done
-        fi
-    done
-    
-    log "INFO" "Cleanup completed. Retention: $retention_days days"
+    log "INFO" "Local cleanup completed: deleted $deleted backups, kept $keep_count most recent"
+    log "INFO" "Cloud storage handles all long-term retention via rclone"
 }
 
 # Generate backup summary
@@ -341,7 +344,6 @@ Mattermost Backup Summary
 ========================
 Backup Date: $(date)
 Backup Directory: $backup_dir
-Retention Policy: $RETENTION_DAYS days
 
 Database Backup:
 $(ls -lh "$backup_dir"/database/*.sql 2>/dev/null || echo "No database backup found")
@@ -358,24 +360,18 @@ Available Disk Space: $(df -h /home/ubuntu | tail -1 | awk '{print $4}')
 
 Backup Status: SUCCESS
 EOF
-
+    
     log "INFO" "Backup summary created: $summary_file"
 }
 
-# Upload to cloud storage
+# Upload to cloud storage with retention
 cloud_backup() {
     local backup_dir="$1"
     local timestamp="$2"
     
     log "INFO" "Starting cloud backup upload..."
     
-    # Check if cloud backup script exists
-    if [[ ! -f "$SCRIPT_DIR/cloud-backup.sh" ]]; then
-        log "WARN" "Cloud backup script not found - skipping cloud upload"
-        return 0
-    fi
-    
-    # Check if rclone is configured
+    # Check if rclone is available
     if ! command -v rclone >/dev/null 2>&1; then
         log "WARN" "rclone not found - skipping cloud backup"
         return 0
@@ -386,11 +382,34 @@ cloud_backup() {
         return 0
     fi
     
-    # Run cloud backup script
-    if "$SCRIPT_DIR/cloud-backup.sh" >/dev/null 2>&1; then
-        log "SUCCESS" "Cloud backup upload completed successfully"
+    # Determine retention policy based on day of week
+    local day_of_week=$(date +%u)  # 1=Monday, 7=Sunday
+    local max_age=""
+    
+    # Sunday backups get longer retention (weekly backup)
+    # All other days get standard retention (daily backup)
+    if [[ "$day_of_week" == "7" ]]; then
+        max_age="28d"
+        log "INFO" "Weekly backup detected (Sunday) - using 28 day cloud retention"
     else
-        log "ERROR" "Cloud backup upload failed"
+        max_age="7d"
+        log "INFO" "Daily backup detected - using 7 day cloud retention"
+    fi
+    
+    # Sync to cloud with appropriate retention
+    if rclone sync "$BACKUP_BASE_DIR" "$CLOUD_REMOTE" \
+        --max-age "$max_age" \
+        --delete-during \
+        --progress \
+        --stats-one-line \
+        --stats 30s \
+        --log-file /home/ubuntu/logs/rclone-backup.log \
+        --log-level INFO; then
+        
+        log "SUCCESS" "Cloud backup completed with $max_age retention"
+        log "INFO" "Cloud storage automatically cleaned old backups beyond $max_age"
+    else
+        log "ERROR" "Cloud backup failed"
         return 1
     fi
 }
@@ -400,7 +419,6 @@ main() {
     local timestamp=$(date '+%Y%m%d_%H%M%S')
     
     log "INFO" "Starting Mattermost backup process - Timestamp: $timestamp"
-    log "INFO" "Retention policy: $RETENTION_DAYS days"
     
     # Pre-flight checks
     check_permissions
@@ -424,11 +442,11 @@ main() {
     # Generate summary
     generate_summary "$BACKUP_DIR" "$timestamp"
     
-    # Cleanup old backups
-    cleanup_old_backups "$RETENTION_DAYS"
-    
-    # Upload to cloud storage
+    # Upload to cloud storage (with automatic retention)
     cloud_backup "$BACKUP_DIR" "$timestamp"
+    
+    # Simple local cleanup (keep last 2 backups)
+    cleanup_old_backups
     
     log "SUCCESS" "Backup process completed successfully"
     log "INFO" "Backup location: $BACKUP_DIR"
@@ -438,16 +456,14 @@ main() {
 # Usage information
 usage() {
     cat << EOF
-Usage: $0 [retention_days] [--verbose]
+Usage: $0 [--verbose]
 
 Arguments:
-  retention_days    Number of days to keep backups (default: 7)
   --verbose         Enable verbose output
 
 Examples:
-  $0                    # Use default 7 days retention
-  $0 14                 # Keep backups for 14 days
-  $0 30 --verbose       # Keep backups for 30 days with verbose output
+  $0                    # Run backup with standard logging
+  $0 --verbose          # Run backup with verbose output
 
 Description:
   Creates comprehensive backups of Mattermost installation including:
@@ -455,7 +471,8 @@ Description:
   - Mattermost data files and uploads
   - Configuration files and SSL certificates
   
-  Backups are stored in: $BACKUP_BASE_DIR
+  Local storage: Keeps last 2 backups in $BACKUP_BASE_DIR
+  Cloud storage: Automatic retention via rclone (7d daily, 28d on Sundays)
   
 EOF
 }
@@ -464,15 +481,6 @@ EOF
 if [[ "${1:-}" == "-h" ]] || [[ "${1:-}" == "--help" ]]; then
     usage
     exit 0
-fi
-
-# Validate retention days argument
-if [[ -n "${1:-}" ]] && ! [[ "$1" =~ ^[0-9]+$ ]]; then
-    if [[ "$1" != "--verbose" ]]; then
-        echo "Error: retention_days must be a positive number"
-        usage
-        exit 1
-    fi
 fi
 
 # Run main function
