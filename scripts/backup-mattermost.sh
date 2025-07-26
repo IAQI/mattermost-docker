@@ -22,7 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
 HOME_DIR="$(eval echo ~${SUDO_USER:-$USER})"  # Get actual user's home even when using sudo
 BACKUP_BASE_DIR="${HOME_DIR}/backups"
-LOG_FILE="/var/log/mattermost-backup.log"
+LOGS_DIR="${HOME_DIR}/logs"
+LOG_FILE="${LOGS_DIR}/mattermost-backup.log"
 VERBOSE=""
 ALLOW_ROOT=""
 
@@ -44,6 +45,9 @@ log() {
     local level="$1"
     local message="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Ensure logs directory exists
+    mkdir -p "$LOGS_DIR"
     
     # Write to log file only
     echo -e "${timestamp} [$level] $message" >> "$LOG_FILE"
@@ -436,7 +440,7 @@ cloud_backup() {
         --progress \
         --stats-one-line \
         --stats 30s \
-        --log-file ${HOME_DIR}/logs/rclone-backup.log \
+        --log-file ${LOGS_DIR}/rclone-backup.log \
         --log-level INFO; then
         
         log "SUCCESS" "Cloud backup completed with $max_age retention"
@@ -509,6 +513,7 @@ Description:
   
   Local storage: Keeps last 2 backups in $BACKUP_BASE_DIR
   Cloud storage: Automatic retention via rclone (7d daily, 28d on Sundays)
+  Logs: Main log at $LOG_FILE, rclone log at $LOGS_DIR/rclone-backup.log
   
 EOF
 }

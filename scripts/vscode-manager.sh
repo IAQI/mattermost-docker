@@ -6,7 +6,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="/var/log/vscode-manager.log"
+HOME_DIR="$(eval echo ~${SUDO_USER:-$USER})"
+LOGS_DIR="${HOME_DIR}/logs"
+LOG_FILE="${LOGS_DIR}/vscode-manager.log"
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,6 +18,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 log() {
+    mkdir -p "$LOGS_DIR"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 

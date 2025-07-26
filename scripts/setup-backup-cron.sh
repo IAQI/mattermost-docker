@@ -104,7 +104,7 @@ echo
 echo "Setup complete!"
 echo
 echo "Useful commands:"
-echo "  View logs:        tail -f /var/log/mattermost-backup.log"
+echo "  View logs:        tail -f ~/logs/mattermost-backup.log"
 echo "  Test backup:      $SCRIPT_PATH --verbose"
 echo "  List cron jobs:   crontab -l"
 echo "  Edit cron jobs:   crontab -e"
@@ -113,13 +113,13 @@ echo "Log rotation setup (optional):"
 cat << 'EOF'
   Create /etc/logrotate.d/mattermost-backup:
   
-  /var/log/mattermost-backup*.log {
+  ~/logs/mattermost-backup*.log {
       daily
       missingok
       rotate 30
       compress
       delaycompress
       notifempty
-      create 644 ubuntu ubuntu
+      copytruncate
   }
 EOF
