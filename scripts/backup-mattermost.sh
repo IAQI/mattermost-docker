@@ -20,7 +20,8 @@ set -euo pipefail  # Exit on any error
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
-BACKUP_BASE_DIR="/home/ubuntu/backups"
+HOME_DIR="$(eval echo ~${SUDO_USER:-$USER})"  # Get actual user's home even when using sudo
+BACKUP_BASE_DIR="${HOME_DIR}/backups"
 LOG_FILE="/var/log/mattermost-backup.log"
 VERBOSE=""
 ALLOW_ROOT=""
@@ -135,7 +136,7 @@ check_permissions() {
 # Check disk space
 check_disk_space() {
     local required_space_gb=2  # Minimum 2GB free space
-    local available_space=$(df /home/ubuntu | tail -1 | awk '{print $4}')
+    local available_space=$(df "$HOME_DIR" | tail -1 | awk '{print $4}')
     local available_gb=$((available_space / 1024 / 1024))
     
     if [[ $available_gb -lt $required_space_gb ]]; then
@@ -388,7 +389,7 @@ $(ls -lh "$backup_dir"/config/*.tar.gz 2>/dev/null || echo "No config backup fou
 
 Total Backup Size: $(du -sh "$backup_dir" | cut -f1)
 
-Available Disk Space: $(df -h /home/ubuntu | tail -1 | awk '{print $4}')
+Available Disk Space: $(df -h "$HOME_DIR" | tail -1 | awk '{print $4}')
 
 Backup Status: SUCCESS
 EOF
@@ -435,7 +436,7 @@ cloud_backup() {
         --progress \
         --stats-one-line \
         --stats 30s \
-        --log-file /home/ubuntu/logs/rclone-backup.log \
+        --log-file ${HOME_DIR}/logs/rclone-backup.log \
         --log-level INFO; then
         
         log "SUCCESS" "Cloud backup completed with $max_age retention"
