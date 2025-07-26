@@ -223,9 +223,11 @@ stop_services() {
         # Wait a moment for service to fully stop
         sleep 5
         
-        # Verify mattermost is stopped but nginx and postgres are still running
-        if docker_cmd compose $COMPOSE_FILES ps | grep "mattermost" | grep -q "Up"; then
-            error_exit "Failed to stop Mattermost service"
+        # Verify mattermost is stopped (should NOT appear in running services)
+        if docker_cmd compose $COMPOSE_FILES ps --services --filter "status=running" | grep -q "mattermost"; then
+            error_exit "Failed to stop Mattermost service - still showing as running"
+        else
+            log "SUCCESS" "Mattermost service is confirmed stopped"
         fi
     else
         error_exit "Failed to stop Mattermost service"
@@ -364,8 +366,8 @@ backup_config() {
 cleanup_old_backups() {
     log "INFO" "Cleaning up old local backups (keeping last 2 for quick access)..."
     
-    # Get list of backup directories sorted by date (oldest first)
-    local backup_dirs=($(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "20*" | sort))
+    # Get list of backup directories sorted by date (newest first)
+    local backup_dirs=($(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "20*" | sort -r))
     local total_backups=${#backup_dirs[@]}
     local keep_count=2
     
@@ -374,11 +376,11 @@ cleanup_old_backups() {
         return 0
     fi
     
-    local delete_count=$((total_backups - keep_count))
+    log "INFO" "Found $total_backups backups, will delete $((total_backups - keep_count)) oldest ones"
     local deleted=0
     
-    # Delete oldest backups, keep only the last 2
-    for ((i=0; i<delete_count; i++)); do
+    # Delete oldest backups, keep only the last 2 (skip first 2 in reverse-sorted list)
+    for ((i=keep_count; i<total_backups; i++)); do
         local dir="${backup_dirs[$i]}"
         local dir_name=$(basename "$dir")
         
