@@ -22,7 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_BASE_DIR="/home/ubuntu/backups"
 LOG_FILE="/var/log/mattermost-backup.log"
-VERBOSE="${1:-}"
+VERBOSE=""
+ALLOW_ROOT=""
 
 # Cloud backup settings
 CLOUD_REMOTE="swissbackup:mattermost-backups"
@@ -88,15 +89,46 @@ cleanup() {
 trap cleanup EXIT
 trap 'error_exit "Script interrupted"' INT TERM
 
-# Check if running as correct user
-check_permissions() {
+# Helper function to run docker commands with or without sudo
+docker_cmd() {
     if [[ $EUID -eq 0 ]]; then
-        error_exit "This script should not be run as root. Run as the ubuntu user."
+        # Running as root, no need for sudo
+        docker "$@"
+    else
+        # Running as regular user, use sudo
+        sudo docker "$@"
+    fi
+}
+
+# Helper function to run tar commands with or without sudo
+tar_cmd() {
+    if [[ $EUID -eq 0 ]]; then
+        # Running as root, no need for sudo
+        tar "$@"
+    else
+        # Running as regular user, use sudo
+        sudo tar "$@"
+    fi
+}
+check_permissions() {
+    if [[ $EUID -eq 0 ]] && [[ "$ALLOW_ROOT" != "--allow-root" ]]; then
+        error_exit "This script should not be run as root. Run as the ubuntu user, or use --allow-root flag to override."
+    fi
+    
+    if [[ $EUID -eq 0 ]] && [[ "$ALLOW_ROOT" == "--allow-root" ]]; then
+        log "WARN" "Running as root (explicitly allowed with --allow-root flag)"
     fi
     
     # Check if user can run docker commands
     if ! docker ps >/dev/null 2>&1 && ! sudo -n docker ps >/dev/null 2>&1; then
-        error_exit "Cannot run docker commands. Please ensure user is in docker group or has sudo access."
+        # If we're root, we don't need sudo, so only check docker directly
+        if [[ $EUID -eq 0 ]]; then
+            if ! docker ps >/dev/null 2>&1; then
+                error_exit "Cannot run docker commands as root."
+            fi
+        else
+            error_exit "Cannot run docker commands. Please ensure user is in docker group or has sudo access."
+        fi
     fi
 }
 
@@ -118,7 +150,7 @@ check_services() {
     cd "$DOCKER_DIR"
     
     # Check if all required services are running
-    local running_services=$(sudo docker compose $COMPOSE_FILES ps --services --filter "status=running")
+    local running_services=$(docker_cmd compose $COMPOSE_FILES ps --services --filter "status=running")
     
     if ! echo "$running_services" | grep -q "mattermost"; then
         error_exit "Mattermost service is not running. Start services first."
@@ -133,7 +165,7 @@ check_services() {
     fi
     
     # Check if PostgreSQL is ready to accept connections
-    if ! sudo docker exec docker-postgres-1 pg_isready -U mmuser >/dev/null 2>&1; then
+    if ! docker_cmd exec docker-postgres-1 pg_isready -U mmuser >/dev/null 2>&1; then
         error_exit "PostgreSQL database is not ready"
     fi
     
@@ -161,7 +193,7 @@ stop_services() {
     
     log "INFO" "Stopping Mattermost and nginx services..."
     
-    if sudo docker compose $COMPOSE_FILES stop mattermost nginx; then
+        if docker_cmd compose $COMPOSE_FILES stop mattermost nginx; then
         SERVICES_STOPPED=true
         log "SUCCESS" "Services stopped successfully"
         
@@ -169,7 +201,7 @@ stop_services() {
         sleep 5
         
         # Verify only postgres is running
-        if sudo docker compose $COMPOSE_FILES ps | grep -E "(mattermost|nginx)" | grep -q "Up"; then
+        if docker_cmd compose $COMPOSE_FILES ps | grep -E "(mattermost|nginx)" | grep -q "Up"; then
             error_exit "Failed to stop all required services"
         fi
     else
@@ -183,7 +215,7 @@ restart_services() {
     
     log "INFO" "Starting all services..."
     
-    if sudo docker compose $COMPOSE_FILES up -d; then
+    if docker_cmd compose $COMPOSE_FILES up -d; then
         SERVICES_STOPPED=false
         log "SUCCESS" "All services started successfully"
         
@@ -193,7 +225,7 @@ restart_services() {
         # Verify services are running
         local retries=0
         while [[ $retries -lt 30 ]]; do
-            if sudo docker compose $COMPOSE_FILES ps | grep -E "(mattermost|nginx|postgres)" | grep -c "Up" | grep -q "3"; then
+            if docker_cmd compose $COMPOSE_FILES ps | grep -E "(mattermost|nginx|postgres)" | grep -c "Up" | grep -q "3"; then
                 log "SUCCESS" "All services are healthy"
                 return 0
             fi
@@ -218,7 +250,7 @@ backup_database() {
     local db_backup_file="$backup_dir/database/mattermost_db_backup_${timestamp}.sql"
     
     # Create database backup
-    if sudo docker exec docker-postgres-1 pg_dumpall -U mmuser > "$db_backup_file"; then
+    if docker_cmd exec docker-postgres-1 pg_dumpall -U mmuser > "$db_backup_file"; then
         # Verify backup file is not empty and contains expected content
         if [[ -s "$db_backup_file" ]] && grep -q "CREATE ROLE mmuser" "$db_backup_file"; then
             log "SUCCESS" "Database backup completed: $(du -h "$db_backup_file" | cut -f1)"
@@ -240,13 +272,13 @@ backup_data() {
     local data_backup_file="$backup_dir/data/mattermost_data_backup_${timestamp}.tar.gz"
     
     # Create data backup
-    if sudo tar -czf "$data_backup_file" -C "$DOCKER_DIR" ./volumes/app/mattermost/; then
+    if tar_cmd -czf "$data_backup_file" -C "$DOCKER_DIR" ./volumes/app/mattermost/; then
         # Verify backup file exists and is not empty
         if [[ -s "$data_backup_file" ]]; then
             log "SUCCESS" "Data backup completed: $(du -h "$data_backup_file" | cut -f1)"
             
             # Verify archive integrity
-            if sudo tar -tzf "$data_backup_file" >/dev/null 2>&1; then
+            if tar_cmd -tzf "$data_backup_file" >/dev/null 2>&1; then
                 log "INFO" "Data backup archive integrity verified"
             else
                 error_exit "Data backup archive is corrupted"
@@ -269,7 +301,7 @@ backup_config() {
     local config_backup_file="$backup_dir/config/mattermost_config_backup_${timestamp}.tar.gz"
     
     # Create config backup (excluding large certificate archives)
-    if sudo tar --exclude=certs/etc/letsencrypt/archive \
+    if tar_cmd --exclude=certs/etc/letsencrypt/archive \
         --exclude=certs/lib/letsencrypt \
         -czf "$config_backup_file" \
         -C "$DOCKER_DIR" \
@@ -285,7 +317,7 @@ backup_config() {
             log "SUCCESS" "Configuration backup completed: $(du -h "$config_backup_file" | cut -f1)"
             
             # Verify archive integrity
-            if sudo tar -tzf "$config_backup_file" >/dev/null 2>&1; then
+            if tar_cmd -tzf "$config_backup_file" >/dev/null 2>&1; then
                 log "INFO" "Configuration backup archive integrity verified"
             else
                 error_exit "Configuration backup archive is corrupted"
@@ -456,14 +488,17 @@ main() {
 # Usage information
 usage() {
     cat << EOF
-Usage: $0 [--verbose]
+Usage: $0 [--verbose] [--allow-root]
 
 Arguments:
   --verbose         Enable verbose output
+  --allow-root      Allow running as root user (not recommended)
 
 Examples:
   $0                    # Run backup with standard logging
   $0 --verbose          # Run backup with verbose output
+  $0 --allow-root       # Run as root (use with caution)
+  $0 --verbose --allow-root  # Verbose output and allow root
 
 Description:
   Creates comprehensive backups of Mattermost installation including:
@@ -482,6 +517,23 @@ if [[ "${1:-}" == "-h" ]] || [[ "${1:-}" == "--help" ]]; then
     usage
     exit 0
 fi
+
+# Parse command line arguments
+for arg in "$@"; do
+    case $arg in
+        --verbose)
+            VERBOSE="--verbose"
+            ;;
+        --allow-root)
+            ALLOW_ROOT="--allow-root"
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            usage
+            exit 1
+            ;;
+    esac
+done
 
 # Run main function
 main "$@"
