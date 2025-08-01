@@ -22,6 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
 HOME_DIR="$(eval echo ~${SUDO_USER:-$USER})"  # Get actual user's home even when using sudo
 BACKUP_BASE_DIR="${HOME_DIR}/backups"
+BACKUP_DAILY_DIR="${BACKUP_BASE_DIR}/daily"
+BACKUP_WEEKLY_DIR="${BACKUP_BASE_DIR}/weekly"
 LOGS_DIR="${HOME_DIR}/logs"
 LOG_FILE="${LOGS_DIR}/mattermost-backup.log"
 VERBOSE=""
@@ -186,16 +188,21 @@ check_services() {
 # Create backup directories
 create_backup_dirs() {
     local timestamp="$1"
+    local is_weekly="$2"
     
-    # Create timestamped backup directory
-    BACKUP_DIR="$BACKUP_BASE_DIR/$timestamp"
+    # Choose backup directory based on type
+    if [[ "$is_weekly" == "true" ]]; then
+        BACKUP_DIR="$BACKUP_WEEKLY_DIR/$timestamp"
+        log "INFO" "Creating weekly backup directories: $BACKUP_DIR"
+    else
+        BACKUP_DIR="$BACKUP_DAILY_DIR/$timestamp"
+        log "INFO" "Creating daily backup directories: $BACKUP_DIR"
+    fi
     
     mkdir -p "$BACKUP_DIR"/{database,data,config}
     
-    # Create base backup directory if it doesn't exist
-    mkdir -p "$BACKUP_BASE_DIR"
-    
-    log "INFO" "Created backup directories: $BACKUP_DIR"
+    # Create base backup directories if they don't exist
+    mkdir -p "$BACKUP_DAILY_DIR" "$BACKUP_WEEKLY_DIR"
 }
 
 # Stop Mattermost services (keep database running) and enable maintenance mode
@@ -362,38 +369,65 @@ backup_config() {
     fi
 }
 
-# Simple local cleanup - keep only last 2 backups locally
+# Simple local cleanup - keep only last 2 daily and 2 weekly backups locally
 cleanup_old_backups() {
-    log "INFO" "Cleaning up old local backups (keeping last 2 for quick access)..."
+    log "INFO" "Cleaning up old local backups..."
     
-    # Get list of backup directories sorted by date (newest first)
-    local backup_dirs=($(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "20*" | sort -r))
-    local total_backups=${#backup_dirs[@]}
-    local keep_count=2
+    # Clean up daily backups (keep last 2)
+    log "INFO" "Cleaning up daily backups (keeping last 2)..."
+    local daily_dirs=($(find "$BACKUP_DAILY_DIR" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort -r))
+    local total_daily=${#daily_dirs[@]}
+    local keep_daily=2
     
-    if [[ $total_backups -le $keep_count ]]; then
-        log "INFO" "Found $total_backups backups, keeping all (≤ $keep_count)"
-        return 0
+    if [[ $total_daily -le $keep_daily ]]; then
+        log "INFO" "Found $total_daily daily backups, keeping all (≤ $keep_daily)"
+    else
+        log "INFO" "Found $total_daily daily backups, will delete $((total_daily - keep_daily)) oldest ones"
+        local deleted_daily=0
+        
+        for ((i=keep_daily; i<total_daily; i++)); do
+            local dir="${daily_dirs[$i]}"
+            local dir_name=$(basename "$dir")
+            
+            if rm -rf "$dir"; then
+                ((deleted_daily++))
+                log "INFO" "Deleted old daily backup: $dir_name"
+            else
+                log "WARN" "Failed to delete daily backup: $dir_name"
+            fi
+        done
+        
+        log "INFO" "Daily cleanup: deleted $deleted_daily backups, kept $keep_daily most recent"
     fi
     
-    log "INFO" "Found $total_backups backups, will delete $((total_backups - keep_count)) oldest ones"
-    local deleted=0
+    # Clean up weekly backups (keep last 2)
+    log "INFO" "Cleaning up weekly backups (keeping last 2)..."
+    local weekly_dirs=($(find "$BACKUP_WEEKLY_DIR" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort -r))
+    local total_weekly=${#weekly_dirs[@]}
+    local keep_weekly=2
     
-    # Delete oldest backups, keep only the last 2 (skip first 2 in reverse-sorted list)
-    for ((i=keep_count; i<total_backups; i++)); do
-        local dir="${backup_dirs[$i]}"
-        local dir_name=$(basename "$dir")
+    if [[ $total_weekly -le $keep_weekly ]]; then
+        log "INFO" "Found $total_weekly weekly backups, keeping all (≤ $keep_weekly)"
+    else
+        log "INFO" "Found $total_weekly weekly backups, will delete $((total_weekly - keep_weekly)) oldest ones"
+        local deleted_weekly=0
         
-        if rm -rf "$dir"; then
-            ((deleted++))
-            log "INFO" "Deleted local backup: $dir_name (cloud copy preserved)"
-        else
-            log "WARN" "Failed to delete local backup: $dir_name"
-        fi
-    done
+        for ((i=keep_weekly; i<total_weekly; i++)); do
+            local dir="${weekly_dirs[$i]}"
+            local dir_name=$(basename "$dir")
+            
+            if rm -rf "$dir"; then
+                ((deleted_weekly++))
+                log "INFO" "Deleted old weekly backup: $dir_name"
+            else
+                log "WARN" "Failed to delete weekly backup: $dir_name"
+            fi
+        done
+        
+        log "INFO" "Weekly cleanup: deleted $deleted_weekly backups, kept $keep_weekly most recent"
+    fi
     
-    log "INFO" "Local cleanup completed: deleted $deleted backups, kept $keep_count most recent"
-    log "INFO" "Cloud storage handles all long-term retention via rclone"
+    log "INFO" "Local cleanup completed - daily: last $keep_daily, weekly: last $keep_weekly"
 }
 
 # Generate backup summary
@@ -432,6 +466,7 @@ EOF
 cloud_backup() {
     local backup_dir="$1"
     local timestamp="$2"
+    local is_weekly="$3"
     
     log "INFO" "Starting cloud backup upload..."
     
@@ -446,32 +481,37 @@ cloud_backup() {
         return 0
     fi
     
-    # Determine retention policy based on day of week
-    local day_of_week=$(date +%u)  # 1=Monday, 7=Sunday
-    local max_age=""
-    
-    # Sunday backups get longer retention (weekly backup)
-    # All other days get standard retention (daily backup)
-    if [[ "$day_of_week" == "7" ]]; then
-        max_age="28d"
-        log "INFO" "Weekly backup detected (Sunday) - using 28 day cloud retention"
-    else
-        max_age="7d"
-        log "INFO" "Daily backup detected - using 7 day cloud retention"
-    fi
-    
-    # Sync to cloud with appropriate retention
-    if rclone sync "$BACKUP_BASE_DIR" "$CLOUD_REMOTE" \
-        --max-age "$max_age" \
-        --delete-during \
+    # Upload new backups to cloud
+    if rclone copy "$BACKUP_BASE_DIR" "$CLOUD_REMOTE" \
         --progress \
         --stats-one-line \
         --stats 30s \
         --log-file ${LOGS_DIR}/rclone-backup.log \
         --log-level INFO; then
         
-        log "SUCCESS" "Cloud backup completed with $max_age retention"
-        log "INFO" "Cloud storage automatically cleaned old backups beyond $max_age"
+        # Clean up old backups by folder - much simpler now!
+        log "INFO" "Cleaning up old cloud backups..."
+        
+        # Clean daily backups older than 7 days
+        log "INFO" "Cleaning daily backups older than 7 days..."
+        rclone delete "$CLOUD_REMOTE/daily" \
+            --min-age 7d \
+            --log-file ${LOGS_DIR}/rclone-backup.log \
+            --log-level INFO || true
+        
+        # Clean weekly backups older than 28 days
+        log "INFO" "Cleaning weekly backups older than 28 days..."
+        rclone delete "$CLOUD_REMOTE/weekly" \
+            --min-age 28d \
+            --log-file ${LOGS_DIR}/rclone-backup.log \
+            --log-level INFO || true
+        
+        if [[ "$is_weekly" == "true" ]]; then
+            log "SUCCESS" "Weekly cloud backup completed (28d retention)"
+        else
+            log "SUCCESS" "Daily cloud backup completed (7d retention)"
+        fi
+        log "INFO" "Cloud cleanup completed - daily: 7d, weekly: 28d retention"
     else
         log "ERROR" "Cloud backup failed"
         return 1
@@ -481,8 +521,16 @@ cloud_backup() {
 # Main backup function
 main() {
     local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local day_of_week=$(date +%u)  # 1=Monday, 7=Sunday
+    local is_weekly="false"
     
-    log "INFO" "Starting Mattermost backup process - Timestamp: $timestamp"
+    # Determine if this is a weekly backup (Sunday)
+    if [[ "$day_of_week" == "7" ]]; then
+        is_weekly="true"
+        log "INFO" "Starting Mattermost WEEKLY backup process - Timestamp: $timestamp"
+    else
+        log "INFO" "Starting Mattermost DAILY backup process - Timestamp: $timestamp"
+    fi
     
     # Pre-flight checks
     check_permissions
@@ -490,7 +538,7 @@ main() {
     check_services
     
     # Create backup structure
-    create_backup_dirs "$timestamp"
+    create_backup_dirs "$timestamp" "$is_weekly"
     
     # Stop services safely
     stop_services
@@ -507,12 +555,16 @@ main() {
     generate_summary "$BACKUP_DIR" "$timestamp"
     
     # Upload to cloud storage (with automatic retention)
-    cloud_backup "$BACKUP_DIR" "$timestamp"
+    cloud_backup "$BACKUP_DIR" "$timestamp" "$is_weekly"
     
-    # Simple local cleanup (keep last 2 backups)
+    # Local cleanup (keep last 2 daily, 2 weekly)
     cleanup_old_backups
     
-    log "SUCCESS" "Backup process completed successfully"
+    if [[ "$is_weekly" == "true" ]]; then
+        log "SUCCESS" "Weekly backup process completed successfully"
+    else
+        log "SUCCESS" "Daily backup process completed successfully"
+    fi
     log "INFO" "Backup location: $BACKUP_DIR"
     log "INFO" "Total backup size: $(du -sh "$BACKUP_DIR" | cut -f1)"
 }
@@ -538,8 +590,12 @@ Description:
   - Mattermost data files and uploads
   - Configuration files and SSL certificates
   
-  Local storage: Keeps last 2 backups in $BACKUP_BASE_DIR
-  Cloud storage: Automatic retention via rclone (7d daily, 28d on Sundays)
+  Backup Structure:
+  - Daily backups: Stored in $BACKUP_DAILY_DIR (local: keep 2, cloud: 7d retention)
+  - Weekly backups: Stored in $BACKUP_WEEKLY_DIR (local: keep 2, cloud: 28d retention)
+  - Weekly backups automatically created on Sundays
+  
+  Cloud storage: Automatic age-based retention (daily: 7d, weekly: 28d)
   Logs: Main log at $LOG_FILE, rclone log at $LOGS_DIR/rclone-backup.log
   
 EOF

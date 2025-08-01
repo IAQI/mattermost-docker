@@ -43,19 +43,42 @@ cd ~/docker/scripts
 
 ### Backup Locations
 
-- **Local Backups**: `~/backups/YYYYMMDD_HHMMSS/`
-  - `database/mattermost_db_backup_YYYYMMDD_HHMMSS.sql`
-  - `data/mattermost_data_backup_YYYYMMDD_HHMMSS.tar.gz`
-  - `config/mattermost_config_backup_YYYYMMDD_HHMMSS.tar.gz`
-  - `backup_summary_YYYYMMDD_HHMMSS.txt`
-- **Cloud Backups**: SwissBackup with automatic retention (7d daily, 28d weekly)
-- **Logs**: `~/logs/mattermost-backup.log` and `~/logs/rclone-backup.log`
+**Local Backups**:
+- **Daily Backups**: `~/backups/daily/YYYYMMDD_HHMMSS/`
+- **Weekly Backups**: `~/backups/weekly/YYYYMMDD_HHMMSS/` (created on Sundays)
+
+Each backup directory contains:
+- `database/mattermost_db_backup_YYYYMMDD_HHMMSS.sql`
+- `data/mattermost_data_backup_YYYYMMDD_HHMMSS.tar.gz`
+- `config/mattermost_config_backup_YYYYMMDD_HHMMSS.tar.gz`
+- `backup_summary_YYYYMMDD_HHMMSS.txt`
+
+**Cloud Backups**: 
+- `swissbackup:mattermost-backups/daily/` - Daily backups with 7-day retention
+- `swissbackup:mattermost-backups/weekly/` - Weekly backups with 28-day retention
+
+**Logs**: `~/logs/mattermost-backup.log` and `~/logs/rclone-backup.log`
 
 ### Cloud Backup Retention Policy
 
-- **Daily backups**: Kept for 7 days in cloud storage
-- **Weekly backups (Sunday)**: Kept for 28 days in cloud storage
-- **Local backups**: Only 2 most recent kept locally for quick access
+The backup system uses intelligent scheduling and retention:
+
+**Backup Schedule**:
+- **Monday-Saturday**: Daily backups stored in `~/backups/daily/`
+- **Sunday**: Weekly backups stored in `~/backups/weekly/`
+
+**Local Retention**:
+- **Daily backups**: Keep last 2 locally
+- **Weekly backups**: Keep last 2 locally
+
+**Cloud Retention**:
+- **Daily backups**: Kept for 7 days in `swissbackup:mattermost-backups/daily/`
+- **Weekly backups**: Kept for 28 days in `swissbackup:mattermost-backups/weekly/`
+
+This ensures you have:
+- Recent backups locally for fast access
+- 1 week of daily granularity in the cloud
+- 4 weeks of weekly backups for longer-term recovery
 
 ## Manual Backup Process
 
@@ -69,7 +92,7 @@ cd ~/docker/scripts
 
 ```bash
 # Create backup directory structure  
-mkdir -p ~/backups/{database,data,config}
+mkdir -p ~/backups/{daily,weekly}
 mkdir -p ~/logs
 ```
 
@@ -90,29 +113,42 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml ps
 ```bash
 # Create database backup with timestamp
 BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
+
+# Determine backup type and directory
+DAY_OF_WEEK=$(date +%u)  # 1=Monday, 7=Sunday
+if [[ "$DAY_OF_WEEK" == "7" ]]; then
+    BACKUP_TYPE="weekly"
+else
+    BACKUP_TYPE="daily"
+fi
+
+# Create backup directories
+mkdir -p ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/{database,data,config}
+
+# Create database backup
 sudo docker exec docker-postgres-1 pg_dumpall -U mmuser > \
-  ~/backups/database/mattermost_db_backup_${BACKUP_DATE}.sql
+  ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/database/mattermost_db_backup_${BACKUP_DATE}.sql
 
 # Verify backup was created
-ls -lh ~/backups/database/
+ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/database/
 ```
 
 ### Step 4: Backup Mattermost Data
 
 ```bash
 # Backup Mattermost data directory
-sudo tar -czf ~/backups/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz \
+sudo tar -czf ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz \
   -C ~/docker ./volumes/app/mattermost/
 
 # Verify backup was created
-ls -lh ~/backups/data/
+ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/
 ```
 
 ### Step 5: Backup Configuration
 
 ```bash
 # Backup Docker configuration and certificates
-sudo tar -czf ~/backups/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz \
+sudo tar -czf ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz \
   -C ~/docker \
   .env \
   docker-compose.yml \
@@ -124,7 +160,7 @@ sudo tar -czf ~/backups/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz \
   --exclude=certs/lib/letsencrypt
 
 # Verify backup was created
-ls -lh ~/backups/config/
+ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/config/
 ```
 
 ### Step 6: Restart Services
@@ -141,16 +177,19 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml ps
 
 ```bash
 # Check database backup can be read
-head -20 ~/backups/database/mattermost_db_backup_${BACKUP_DATE}.sql
+head -20 ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/database/mattermost_db_backup_${BACKUP_DATE}.sql
 
 # Test archive integrity
-tar -tzf ~/backups/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz > /dev/null
-tar -tzf ~/backups/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz > /dev/null
+tar -tzf ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz > /dev/null
+tar -tzf ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz > /dev/null
 
 # Check backup sizes
-du -sh ~/backups/database/mattermost_db_backup_${BACKUP_DATE}.sql
-du -sh ~/backups/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz
-du -sh ~/backups/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz
+du -sh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/database/mattermost_db_backup_${BACKUP_DATE}.sql
+du -sh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz
+du -sh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz
+
+# Show backup summary
+cat ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/backup_summary_${BACKUP_DATE}.txt
 ```
 
 ## Automated Backup Setup
@@ -220,22 +259,23 @@ Create `/etc/logrotate.d/mattermost-backup`:
 The backup script supports automatic cloud uploads via rclone. Configure SwissBackup:
 
 ```bash
-# Configure rclone (one-time setup)
-rclone config
+# View current cloud backups (new structure)
+rclone ls swissbackup:mattermost-backups/daily
+rclone ls swissbackup:mattermost-backups/weekly
 
-# Test configuration
-rclone lsd swissbackup:
-
-# View current cloud backups
-rclone ls swissbackup:mattermost-backups
+# List with the backup manager script
+cd ~/docker/scripts
+./rclone-manager.sh list
 ```
 
 ### Cloud Backup Features
 
-- **Automatic retention**: Old backups automatically deleted
+- **Organized structure**: Separate daily and weekly directories
+- **Automatic retention**: Old backups automatically deleted by age
 - **Differential sync**: Only changed files uploaded
 - **Progress reporting**: Real-time upload progress
 - **Error handling**: Continues backup process on cloud failure
+- **Management tools**: Use `rclone-manager.sh` script for easy management
 
 ## Disaster Recovery
 

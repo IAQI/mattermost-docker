@@ -13,8 +13,19 @@ Our automated backup system creates timestamped backup directories with:
 
 ## Backup Locations
 
-- **Local Backups:** `/home/ubuntu/backups/YYYYMMDD_HHMMSS/`
-- **Cloud Backups:** SwissBackup storage via rclone (`swissbackup:mattermost-backups`)
+**Local Backups:**
+- **Daily Backups:** `/home/ubuntu/backups/daily/YYYYMMDD_HHMMSS/`
+- **Weekly Backups:** `/home/ubuntu/backups/weekly/YYYYMMDD_HHMMSS/`
+
+**Cloud Backups:**
+- **Daily:** `swissbackup:mattermost-backups/daily/YYYYMMDD_HHMMSS/`
+- **Weekly:** `swissbackup:mattermost-backups/weekly/YYYYMMDD_HHMMSS/`
+
+Each backup contains the same structure:
+- `database/mattermost_db_backup_YYYYMMDD_HHMMSS.sql`
+- `data/mattermost_data_backup_YYYYMMDD_HHMMSS.tar.gz`
+- `config/mattermost_config_backup_YYYYMMDD_HHMMSS.tar.gz`
+- `backup_summary_YYYYMMDD_HHMMSS.txt`
 
 ## Prerequisites
 
@@ -30,18 +41,27 @@ Our automated backup system creates timestamped backup directories with:
 If you need to restore from cloud storage instead of local backups:
 
 ```bash
-# List available backups in SwissBackup
-rclone ls swissbackup:mattermost-backups
-
-# List backup directories
+# List available backup types and directories
 rclone lsf swissbackup:mattermost-backups --dirs-only
 
-# Download specific backup (replace YYYYMMDD_HHMMSS with desired backup)
-BACKUP_DATE="20250725_103415"  # Example: Use latest or desired backup date
-rclone sync swissbackup:mattermost-backups/$BACKUP_DATE /home/ubuntu/backups/$BACKUP_DATE --progress
+# List daily backups
+rclone lsf swissbackup:mattermost-backups/daily --dirs-only
+
+# List weekly backups  
+rclone lsf swissbackup:mattermost-backups/weekly --dirs-only
+
+# Download specific backup (choose daily or weekly)
+BACKUP_TYPE="daily"  # or "weekly"
+BACKUP_DATE="20250801_020001"  # Example: Use latest or desired backup date
+rclone sync swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE /home/ubuntu/backups/$BACKUP_TYPE/$BACKUP_DATE --progress
 
 # Verify download
-ls -la /home/ubuntu/backups/$BACKUP_DATE/
+ls -la /home/ubuntu/backups/$BACKUP_TYPE/$BACKUP_DATE/
+
+# Alternative: Use the rclone manager script for easier browsing
+cd ~/docker/scripts
+./rclone-manager.sh list
+./rclone-manager.sh details $BACKUP_DATE
 ```
 
 ### Step 1: Choose and Verify Backup
@@ -50,11 +70,13 @@ Select the backup you want to restore from:
 
 ```bash
 # List available local backups
-ls -la /home/ubuntu/backups/
+ls -la /home/ubuntu/backups/daily/
+ls -la /home/ubuntu/backups/weekly/
 
-# Choose backup directory (use latest or desired backup)
-BACKUP_DATE="20250725_103415"  # Replace with your chosen backup
-BACKUP_DIR="/home/ubuntu/backups/$BACKUP_DATE"
+# Choose backup directory and type
+BACKUP_TYPE="daily"  # or "weekly"
+BACKUP_DATE="20250801_020001"  # Replace with your chosen backup
+BACKUP_DIR="/home/ubuntu/backups/$BACKUP_TYPE/$BACKUP_DATE"
 
 # Verify backup completeness
 echo "Checking backup: $BACKUP_DIR"
@@ -117,7 +139,7 @@ Restore the PostgreSQL database from the backup file:
 
 ```bash
 # Set backup directory variable (from Step 1)
-BACKUP_DIR="/home/ubuntu/backups/$BACKUP_DATE"
+BACKUP_DIR="/home/ubuntu/backups/$BACKUP_TYPE/$BACKUP_DATE"
 
 # Clear current database
 sudo docker exec -it docker-postgres-1 psql -U mmuser -d postgres -c "DROP DATABASE IF EXISTS mattermost;"
@@ -238,43 +260,65 @@ echo "Visit: https://mattermost.iaqi.org"
 ### Listing Available Cloud Backups
 
 ```bash
-# List all backup directories in SwissBackup
+# List all backup types in SwissBackup
 rclone lsf swissbackup:mattermost-backups --dirs-only
 
-# Get detailed listing with sizes and dates
-rclone ls swissbackup:mattermost-backups
+# List daily backup directories
+rclone lsf swissbackup:mattermost-backups/daily --dirs-only
+
+# List weekly backup directories  
+rclone lsf swissbackup:mattermost-backups/weekly --dirs-only
+
+# Get detailed listing with sizes and dates for daily backups
+rclone ls swissbackup:mattermost-backups/daily
+
+# Get detailed listing for weekly backups
+rclone ls swissbackup:mattermost-backups/weekly
 
 # Check specific backup contents
-BACKUP_DATE="20250725_103415"  # Replace with desired backup
-rclone ls swissbackup:mattermost-backups/$BACKUP_DATE
+BACKUP_TYPE="daily"  # or "weekly"
+BACKUP_DATE="20250801_020001"  # Replace with desired backup
+rclone ls swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE
+
+# Use the backup manager script for easier browsing
+cd ~/docker/scripts
+./rclone-manager.sh list
 ```
 
 ### Downloading Specific Files
 
 ```bash
+# Set backup type and date
+BACKUP_TYPE="daily"  # or "weekly"
+BACKUP_DATE="20250801_020001"  # Replace with desired backup
+
 # Download only database backup
-rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/database/ /home/ubuntu/temp-restore/database/
+rclone copy swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE/database/ /home/ubuntu/temp-restore/database/
 
 # Download only data backup  
-rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/data/ /home/ubuntu/temp-restore/data/
+rclone copy swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE/data/ /home/ubuntu/temp-restore/data/
 
 # Download only config backup
-rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/config/ /home/ubuntu/temp-restore/config/
+rclone copy swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE/config/ /home/ubuntu/temp-restore/config/
 ```
 
 ### Verifying Cloud Backup Integrity
 
 ```bash
+# Set backup type and date
+BACKUP_TYPE="daily"  # or "weekly"
+BACKUP_DATE="20250801_020001"  # Replace with desired backup
+
 # Download and check backup summary
-rclone copy swissbackup:mattermost-backups/$BACKUP_DATE/backup_summary_$BACKUP_DATE.txt /tmp/
+rclone copy swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE/backup_summary_$BACKUP_DATE.txt /tmp/
 cat /tmp/backup_summary_$BACKUP_DATE.txt
 
 # Compare file sizes between local and cloud
 echo "Local backup size:"
-du -sh /home/ubuntu/backups/$BACKUP_DATE/ 2>/dev/null || echo "Not available locally"
+du -sh /home/ubuntu/backups/$BACKUP_TYPE/$BACKUP_DATE/ 2>/dev/null || echo "Not available locally"
 
 echo "Cloud backup size:"
-rclone size swissbackup:mattermost-backups/$BACKUP_DATE
+rclone size swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE
 ```
 
 ## Troubleshooting
@@ -429,11 +473,12 @@ For experienced users, here's a condensed restoration sequence:
 
 ```bash
 # Set variables
-BACKUP_DATE="20250725_103415"  # Replace with desired backup
-BACKUP_DIR="/home/ubuntu/backups/$BACKUP_DATE"
+BACKUP_TYPE="daily"  # or "weekly"
+BACKUP_DATE="20250801_020001"  # Replace with desired backup
+BACKUP_DIR="/home/ubuntu/backups/$BACKUP_TYPE/$BACKUP_DATE"
 
 # Download from cloud if needed
-# rclone sync swissbackup:mattermost-backups/$BACKUP_DATE $BACKUP_DIR --progress
+# rclone sync swissbackup:mattermost-backups/$BACKUP_TYPE/$BACKUP_DATE $BACKUP_DIR --progress
 
 # Stop services and backup current state
 cd /home/ubuntu/docker
@@ -457,6 +502,6 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
 
 ---
 
-**Restoration Guide Updated:** July 25, 2025  
-**Backup Source:** Local `/home/ubuntu/backups/` and SwissBackup `swissbackup:mattermost-backups`  
+**Restoration Guide Updated:** August 1, 2025  
+**Backup Source:** Local `/home/ubuntu/backups/{daily,weekly}/` and SwissBackup `swissbackup:mattermost-backups/{daily,weekly}/`  
 **Target Installation:** Mattermost 10.5.2 Enterprise Edition
