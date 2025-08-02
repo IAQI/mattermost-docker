@@ -3,14 +3,16 @@
 #
 # Mattermost Docker Backup Script
 # 
-# This script creates comprehensive backups of:
-# - PostgreSQL database (full dump)
-# - Mattermost data files and uploads
-# - Configuration files and certificates
+# This script creates comprehensive backups following Mattermost official guidelines:
+# - PostgreSQL database (full dump using pg_dumpall)
+# - Mattermost data directory (./volumes/app/mattermost/data/)
+# - Mattermost config directory (./volumes/app/mattermost/config/) 
+# - Docker configuration files for complete restore capability
 #
 # Usage: ./backup-mattermost.sh [--verbose]
 # Example: ./backup-mattermost.sh --verbose
 #
+# Reference: https://docs.mattermost.com/deployment-guide/backup-disaster-recovery.html
 # Created: July 22, 2025
 # Target: Mattermost 10.5.2 Enterprise Edition
 #
@@ -310,8 +312,8 @@ backup_data() {
     
     local data_backup_file="$backup_dir/data/mattermost_data_backup_${timestamp}.tar.gz"
     
-    # Create data backup
-    if tar_cmd -czf "$data_backup_file" -C "$DOCKER_DIR" ./volumes/app/mattermost/; then
+    # Create data backup - only backup the data directory as per Mattermost docs
+    if tar_cmd -czf "$data_backup_file" -C "$DOCKER_DIR/volumes/app/mattermost" ./data/; then
         # Verify backup file exists and is not empty
         if [[ -s "$data_backup_file" ]]; then
             log "SUCCESS" "Data backup completed: $(du -h "$data_backup_file" | cut -f1)"
@@ -339,17 +341,20 @@ backup_config() {
     
     local config_backup_file="$backup_dir/config/mattermost_config_backup_${timestamp}.tar.gz"
     
-    # Create config backup (excluding large certificate archives)
-    if tar_cmd --exclude=certs/etc/letsencrypt/archive \
-        --exclude=certs/lib/letsencrypt \
-        -czf "$config_backup_file" \
+    # Create config backup using Docker directory as base - preserves natural directory structure
+    # Note: excludes must come before the files they apply to
+    if tar_cmd -czf "$config_backup_file" \
         -C "$DOCKER_DIR" \
-        .env \
-        docker-compose.yml \
-        docker-compose.nginx.yml \
-        nginx/ \
-        certs/ \
-        scripts/; then
+        ./volumes/app/mattermost/config/ \
+        ./.env \
+        ./docker-compose.yml \
+        ./docker-compose.nginx.yml \
+        --exclude='nginx/conf.d/.maintenance' \
+        ./nginx/ \
+        --exclude='certs/etc/letsencrypt/archive' \
+        --exclude='certs/lib/letsencrypt' \
+        ./certs/ \
+        2>/dev/null; then
         
         # Verify backup file exists and is not empty
         if [[ -s "$config_backup_file" ]]; then
@@ -365,7 +370,22 @@ backup_config() {
             error_exit "Configuration backup file is empty"
         fi
     else
-        error_exit "Configuration backup failed"
+        log "WARN" "Some files may not be accessible, trying minimal approach..."
+        # Fallback: create archive with only essential files
+        if tar_cmd -czf "$config_backup_file" \
+            -C "$DOCKER_DIR" \
+            ./volumes/app/mattermost/config/ \
+            ./.env \
+            ./docker-compose.yml \
+            ./docker-compose.nginx.yml \
+            --exclude='nginx/conf.d/.maintenance' \
+            ./nginx/ \
+            2>/dev/null; then
+            
+            log "SUCCESS" "Configuration backup completed (without certificates): $(du -h "$config_backup_file" | cut -f1)"
+        else
+            error_exit "Configuration backup failed"
+        fi
     fi
 }
 
@@ -585,10 +605,13 @@ Examples:
   $0 --verbose --allow-root  # Verbose output and allow root
 
 Description:
-  Creates comprehensive backups of Mattermost installation including:
+  Creates comprehensive backups of Mattermost installation following official guidelines:
   - PostgreSQL database (complete dump)
-  - Mattermost data files and uploads
-  - Configuration files and SSL certificates
+  - Mattermost data directory (user files, uploads, etc.)
+  - Mattermost config directory (config.json and SAML certificates)
+  - Docker configuration files for complete restoration capability
+  
+  Reference: https://docs.mattermost.com/deployment-guide/backup-disaster-recovery.html
   
   Backup Structure:
   - Daily backups: Stored in $BACKUP_DAILY_DIR (local: keep 2, cloud: 7d retention)

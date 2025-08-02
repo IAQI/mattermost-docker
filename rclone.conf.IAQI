@@ -1,0 +1,11 @@
+[swissbackup]
+type = swift
+user = SBI-CS341752
+key = [password]
+auth = https://swiss-backup04.infomaniak.com/identity/v3
+domain = default
+tenant = sb_project_SBI-CS341752
+tenant_domain = default
+region = RegionOne
+storage_url =
+auth_version =

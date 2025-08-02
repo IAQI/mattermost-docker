@@ -4,12 +4,14 @@ This guide provides comprehensive instructions for backing up your Mattermost Do
 
 ## Backup Components
 
-A complete Mattermost backup includes:
+A complete Mattermost backup includes the following components following [official Mattermost guidelines](https://docs.mattermost.com/deployment-guide/backup-disaster-recovery.html):
 
-1. **PostgreSQL Database** - All user data, messages, channels, teams
-2. **Mattermost Data Files** - File uploads, attachments, profile pictures
-3. **Configuration Files** - Mattermost configuration and SSL certificates
-4. **Docker Environment** - Environment variables and compose files
+1. **PostgreSQL Database** - All user data, messages, channels, teams, settings
+2. **Mattermost Data Directory** - User file uploads, attachments, profile pictures (from `./volumes/app/mattermost/data/`)
+3. **Mattermost Config Directory** - Configuration files including `config.json` and SAML certificates (from `./volumes/app/mattermost/config/`)
+4. **Docker Environment** - Environment variables, compose files, nginx config, and SSL certificates for complete restoration capability
+
+This approach ensures compliance with Mattermost's official backup recommendations while providing complete Docker environment restoration.
 
 ## Automated Backup Script (Recommended)
 
@@ -87,6 +89,8 @@ This ensures you have:
 - Administrative access to the server
 - Sufficient disk space for backups (recommend 2x current data size)
 - Docker and Docker Compose installed
+- rclone installed (`sudo apt-get install rclone`) and 
+- rclone set up for infomaniak swissbackup (`cp ~/docker/rclone.conf.IAQI ~/.config/rclone/rclone.conf` with password adjusted)
 
 ### Step 1: Prepare Backup Directory
 
@@ -136,9 +140,9 @@ ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/database/
 ### Step 4: Backup Mattermost Data
 
 ```bash
-# Backup Mattermost data directory
+# Backup Mattermost data directory (following official Mattermost guidelines)
 sudo tar -czf ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/mattermost_data_backup_${BACKUP_DATE}.tar.gz \
-  -C ~/docker ./volumes/app/mattermost/
+  -C ~/docker/volumes/app/mattermost ./data/
 
 # Verify backup was created
 ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/
@@ -147,17 +151,19 @@ ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/data/
 ### Step 5: Backup Configuration
 
 ```bash
-# Backup Docker configuration and certificates
+# Backup Mattermost config and Docker configuration
+# Note: excludes must come before the files they apply to
 sudo tar -czf ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/config/mattermost_config_backup_${BACKUP_DATE}.tar.gz \
   -C ~/docker \
-  .env \
-  docker-compose.yml \
-  docker-compose.nginx.yml \
-  nginx/ \
-  certs/ \
-  scripts/ \
-  --exclude=certs/etc/letsencrypt/archive \
-  --exclude=certs/lib/letsencrypt
+  ./volumes/app/mattermost/config/ \
+  ./.env \
+  ./docker-compose.yml \
+  ./docker-compose.nginx.yml \
+  --exclude='nginx/conf.d/.maintenance' \
+  ./nginx/ \
+  --exclude='certs/etc/letsencrypt/archive' \
+  --exclude='certs/lib/letsencrypt' \
+  ./certs/
 
 # Verify backup was created
 ls -lh ~/backups/${BACKUP_TYPE}/${BACKUP_DATE}/config/
@@ -251,6 +257,31 @@ Create `/etc/logrotate.d/mattermost-backup`:
     copytruncate
 }
 ```
+
+## Backup Archive Structure
+
+Each backup creates three archives following Mattermost official guidelines:
+
+### Database Backup (`mattermost_db_backup_*.sql`)
+- Complete PostgreSQL database dump using `pg_dumpall`
+- Contains all users, channels, messages, settings, and permissions
+- Plain SQL format for maximum compatibility
+- Includes database roles and permissions
+
+### Data Backup (`mattermost_data_backup_*.tar.gz`)
+- Contains only the Mattermost data directory: `./data/`
+- Includes user uploads, file attachments, profile pictures
+- Organized by date and team structure
+- Archive preserves file permissions and timestamps
+
+### Configuration Backup (`mattermost_config_backup_*.tar.gz`)
+- **Mattermost config**: `./volumes/app/mattermost/config/` (includes `config.json` and SAML certificates)
+- **Docker environment**: `.env`, `docker-compose.yml`, `docker-compose.nginx.yml`
+- **Nginx configuration**: `./nginx/` (excluding temporary maintenance files)
+- **SSL certificates**: `./certs/` (excluding large Let's Encrypt archives)
+- Natural directory structure preserved for easy restoration
+
+This structure ensures compliance with [Mattermost's official backup recommendations](https://docs.mattermost.com/deployment-guide/backup-disaster-recovery.html) while providing complete Docker environment restoration capability.
 
 ## Cloud Backup Configuration
 
@@ -351,8 +382,9 @@ grep "$(date +%Y-%m-%d)" ~/logs/mattermost-backup.log
 3. **Keep multiple copies** - Local + cloud + offsite
 4. **Document procedures** - Keep restoration steps updated
 5. **Automate monitoring** - Set up alerts for backup failures
+6. **Follow official guidelines** - Backup approach aligns with [Mattermost documentation](https://docs.mattermost.com/deployment-guide/backup-disaster-recovery.html)
 
 For more detailed information, see:
 - `RESTORE_GUIDE.md` - Restoration procedures
 - `TROUBLESHOOTING.md` - Common issues and solutions
-- `scripts/backup-mattermost.sh` - Source code and comments
+- `scripts/backup-mattermost.sh` - Main backup script with comprehensive logging

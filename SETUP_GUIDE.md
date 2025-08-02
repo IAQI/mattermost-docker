@@ -4,17 +4,24 @@ This document summarizes the steps taken to set up a Mattermost server using Doc
 
 ## Prerequisites
 
-- Ubuntu server with Docker and Docker Compose installed
+- Ubuntu server with Docker and Docker Compose installed, following https://docs.docker.com/engine/install/ubuntu/ 
 - Domain name pointing to your server (mattermost.iaqi.org)
 - Port 80 and 443 accessible from the internet (open these two ports up on the infomaniak management portal)
 
 ## Initial Setup
 
 ### 1. Clone and Configure
+Following the official instructions on https://docs.mattermost.com/deployment-guide/server/containers/install-docker.html, tweaked for the IAQI mattermost server.
 
 ```bash
+# Clone 
+git clone https://github.com/IAQI/mattermost-docker.git docker
+
 # Navigate to the docker directory containing the mattermost-docker setup
 cd /home/ubuntu/docker
+
+# Create .env configuation file from IAQI template
+cp env.IAQI .env
 
 # Review the .env configuration file
 # Key settings configured:
@@ -38,8 +45,8 @@ POSTGRES_PASSWORD=mmuser_password
 POSTGRES_DB=mattermost
 
 # SSL Certificate paths
-CERT_PATH=./certs/etc/letsencrypt/live/${DOMAIN}-0001/fullchain.pem
-KEY_PATH=./certs/etc/letsencrypt/live/${DOMAIN}-0001/privkey.pem
+CERT_PATH=./certs/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+KEY_PATH=./certs/etc/letsencrypt/live/${DOMAIN}/privkey.pem
 
 # Mattermost configuration
 MATTERMOST_IMAGE=mattermost-enterprise-edition
@@ -61,33 +68,17 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml down
 
 ### 4. Fix Certificate Permissions
 
-The nginx container runs as user 101, so certificate files needed proper ownership:
+The nginx container runs as user ubuntu, so certificate files needed proper ownership:
 
 ```bash
 # Change ownership of certificate files to nginx user
-sudo chown -R 101:101 ./certs/
+sudo chown -R ubuntu:ubuntu ./certs/
 ```
 
-## Docker Permission Setup
-
-### 5. Fix Docker Permissions
-
-Initially encountered permission issues with Docker daemon:
-
-```bash
-# Add user to docker group for permanent access
-sudo usermod -aG docker $USER
-
-# Apply group changes
-newgrp docker
-
-# Alternative: Use sudo for docker commands
-sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
-```
 
 ## Service Deployment
 
-### 6. Deploy Mattermost Stack
+### 5. Deploy Mattermost Stack
 
 ```bash
 # Start all services (postgres, mattermost, nginx)
@@ -161,7 +152,7 @@ This prevents unauthorized certificate issuance and ensures Let's Encrypt can re
 
 ## Final Configuration
 
-### 7. Verify Setup
+### 6. Verify Setup
 
 ```bash
 # Check all containers are healthy
@@ -173,7 +164,7 @@ sudo docker compose ps -a
 # - nginx: Up
 ```
 
-### 8. Access Mattermost
+### 7. Access Mattermost
 
 - **URL:** https://mattermost.iaqi.org
 - **SSL:** Let's Encrypt certificate (valid until Oct 19, 2025)
@@ -242,7 +233,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml pull
 sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
 
 # Check certificate expiry
-sudo openssl x509 -in ./certs/etc/letsencrypt/live/mattermost.iaqi.org-0001/fullchain.pem -noout -dates
+sudo openssl x509 -in ./certs/etc/letsencrypt/live/mattermost.iaqi.org/fullchain.pem -noout -dates
 ```
 
 ## Configuration Management

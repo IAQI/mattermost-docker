@@ -4,12 +4,14 @@ This guide documents the process of restoring a Mattermost instance from backups
 
 ## Backup Files Overview
 
-Our automated backup system creates timestamped backup directories with:
+Our automated backup system creates timestamped backup directories following Mattermost official guidelines:
 
-- **Database Backup:** `mattermost_db_backup_YYYYMMDD_HHMMSS.sql` - PostgreSQL database dump
-- **Data Backup:** `mattermost_data_backup_YYYYMMDD_HHMMSS.tar.gz` - Mattermost application data and files  
-- **Config Backup:** `mattermost_config_backup_YYYYMMDD_HHMMSS.tar.gz` - Configuration files
+- **Database Backup:** `mattermost_db_backup_YYYYMMDD_HHMMSS.sql` - Complete PostgreSQL database dump
+- **Data Backup:** `mattermost_data_backup_YYYYMMDD_HHMMSS.tar.gz` - Mattermost data directory (user files, uploads, etc.)  
+- **Config Backup:** `mattermost_config_backup_YYYYMMDD_HHMMSS.tar.gz` - Mattermost config directory and Docker configuration
 - **Summary:** `backup_summary_YYYYMMDD_HHMMSS.txt` - Backup verification report
+
+**Reference:** https://docs.mattermost.com/deployment-guide/backup-disaster-recovery.html
 
 ## Backup Locations
 
@@ -163,16 +165,14 @@ Replace current Mattermost data with backup data:
 # Stop nginx temporarily to avoid conflicts
 sudo docker stop nginx_mattermost
 
-# Remove current data (we have backup from Step 3)
+# Remove current data directory (we have backup from Step 3)
 sudo rm -rf ./volumes/app/mattermost/data/*
-sudo rm -rf ./volumes/app/mattermost/logs/*
-sudo rm -rf ./volumes/app/mattermost/plugins/*
 
-# Extract backup data
-sudo tar -xzf "$BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/ --strip-components=1
+# Extract backup data - the backup contains only the data directory
+sudo tar -xzf "$BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/
 
 # Fix ownership for Mattermost container (user 2000)
-sudo chown -R 2000:2000 ./volumes/app/mattermost/
+sudo chown -R 2000:2000 ./volumes/app/mattermost/data/
 
 echo "Data restoration completed from: $BACKUP_DIR/data/"
 ```
@@ -185,11 +185,63 @@ Restore the Mattermost configuration:
 # Backup current config as additional safety measure
 sudo cp ./volumes/app/mattermost/config/config.json ./volumes/app/mattermost/config/config.json.backup
 
-# Extract configuration backup
-sudo tar -xzf "$BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz" -C ./volumes/app/mattermost/ --strip-components=1
+# Create temporary directory for extraction
+sudo mkdir -p /tmp/config_restore
 
-# Fix ownership
+# Extract configuration backup
+sudo tar -xzf "$BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz" -C /tmp/config_restore/
+
+# Restore Mattermost config directory (preserves original path structure)
+sudo rm -rf ./volumes/app/mattermost/config/*
+sudo cp -r /tmp/config_restore/volumes/app/mattermost/config/* ./volumes/app/mattermost/config/
+
+### Step 6: Restore Configuration Files
+
+Restore the Mattermost configuration:
+
+```bash
+# Backup current config as additional safety measure
+sudo cp ./volumes/app/mattermost/config/config.json ./volumes/app/mattermost/config/config.json.backup
+
+# Create temporary directory for extraction
+sudo mkdir -p /tmp/config_restore
+
+# Extract configuration backup
+sudo tar -xzf "$BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz" -C /tmp/config_restore/
+
+# Restore Mattermost config directory (preserves original path structure)
+sudo rm -rf ./volumes/app/mattermost/config/*
+sudo cp -r /tmp/config_restore/volumes/app/mattermost/config/* ./volumes/app/mattermost/config/
+
+# Restore Docker configuration files (optional, only if needed)
+sudo cp /tmp/config_restore/.env . 2>/dev/null || echo "No .env file in backup"
+sudo cp /tmp/config_restore/docker-compose.yml . 2>/dev/null || echo "No docker-compose.yml file in backup"
+sudo cp /tmp/config_restore/docker-compose.nginx.yml . 2>/dev/null || echo "No docker-compose.nginx.yml file in backup"
+
+# Restore nginx configuration if needed
+if [[ -d /tmp/config_restore/nginx ]]; then
+    sudo cp -r /tmp/config_restore/nginx/* ./nginx/ 2>/dev/null || echo "nginx config restore had issues"
+fi
+
+# Restore certificates if needed  
+if [[ -d /tmp/config_restore/certs ]]; then
+    sudo cp -r /tmp/config_restore/certs/* ./certs/ 2>/dev/null || echo "certs restore had issues"
+fi
+
+# Fix ownership for Mattermost config
 sudo chown -R 2000:2000 ./volumes/app/mattermost/config/
+
+# Cleanup
+sudo rm -rf /tmp/config_restore
+
+echo "Configuration restored from: $BACKUP_DIR/config/"
+```
+
+# Fix ownership for Mattermost config
+sudo chown -R 2000:2000 ./volumes/app/mattermost/config/
+
+# Cleanup
+sudo rm -rf /tmp/config_restore
 
 echo "Configuration restored from: $BACKUP_DIR/config/"
 ```
