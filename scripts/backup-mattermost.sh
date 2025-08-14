@@ -22,7 +22,7 @@ set -euo pipefail  # Exit on any error
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
-HOME_DIR="$(eval echo ~${SUDO_USER:-$USER})"  # Get actual user's home even when using sudo
+HOME_DIR="$(eval echo ~${SUDO_USER:-${USER:-$(whoami)}})"  # Get actual user's home even when using sudo or cron
 BACKUP_BASE_DIR="${HOME_DIR}/backups"
 BACKUP_DAILY_DIR="${BACKUP_BASE_DIR}/daily"
 BACKUP_WEEKLY_DIR="${BACKUP_BASE_DIR}/weekly"
