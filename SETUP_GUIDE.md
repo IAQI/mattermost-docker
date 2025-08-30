@@ -4,9 +4,12 @@ This document summarizes the steps taken to set up a Mattermost server using Doc
 
 ## Prerequisites
 
-- Ubuntu server with Docker and Docker Compose installed, following https://docs.docker.com/engine/install/ubuntu/ 
-- Domain name pointing to your server (mattermost.iaqi.org)
+- order smallest VPS instance on Infomaniak
+- install public-keys to access the instance
+- Domain name pointing to your server (mm.iaqi.org)
 - Port 80 and 443 accessible from the internet (open these two ports up on the infomaniak management portal)
+
+- Ubuntu server with Docker and Docker Compose installed, following https://docs.docker.com/engine/install/ubuntu/ 
 
 ## Initial Setup
 
