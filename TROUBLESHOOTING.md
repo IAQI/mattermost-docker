@@ -300,10 +300,10 @@ sudo docker exec docker-postgres-1 psql -U mmuser -d mattermost -c "SELECT query
 **Check Certificate Status:**
 ```bash
 # Check certificate expiry
-sudo openssl x509 -in ./certs/etc/letsencrypt/live/mattermost.iaqi.org-0001/fullchain.pem -noout -dates
+sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org-0001/fullchain.pem -noout -dates
 
 # Test SSL connection
-openssl s_client -connect mattermost.iaqi.org:443 -servername mattermost.iaqi.org < /dev/null
+openssl s_client -connect mm.iaqi.org:443 -servername mm.iaqi.org < /dev/null
 
 # Check nginx configuration
 sudo docker exec nginx_mattermost nginx -t
@@ -321,7 +321,7 @@ sudo docker exec docker-mattermost-1 curl -f http://postgres:5432 || echo "Datab
 sudo docker exec nginx_mattermost curl -f http://mattermost:8065/api/v4/system/ping || echo "Mattermost not reachable"
 
 # Check external connectivity
-curl -I https://mattermost.iaqi.org/api/v4/system/ping
+curl -I https://mm.iaqi.org/api/v4/system/ping
 ```
 
 ## Backup and Restore Issues
@@ -378,7 +378,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml ps
 
 # Service health
 echo -e "\nService Health:"
-curl -s -f https://mattermost.iaqi.org/api/v4/system/ping && echo "✅ Mattermost API responding" || echo "❌ Mattermost API not responding"
+curl -s -f https://mm.iaqi.org/api/v4/system/ping && echo "✅ Mattermost API responding" || echo "❌ Mattermost API not responding"
 
 # Database connectivity
 sudo docker exec docker-postgres-1 pg_isready -U mmuser && echo "✅ Database responding" || echo "❌ Database not responding"
@@ -389,7 +389,7 @@ df -h / | tail -1
 
 # Certificate expiry
 echo -e "\nSSL Certificate:"
-sudo openssl x509 -in ./certs/etc/letsencrypt/live/mattermost.iaqi.org-0001/fullchain.pem -noout -enddate
+sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org-0001/fullchain.pem -noout -enddate
 
 echo "=== End Health Check ==="
 ```

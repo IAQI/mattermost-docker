@@ -261,7 +261,7 @@ sudo cat ./volumes/app/mattermost/config/config.json | grep -A 5 -B 5 "DataSourc
 
 # Or manually verify key settings:
 # - SqlSettings.DataSource should be: "postgres://mmuser:mmuser_password@postgres:5432/mattermost?sslmode=disable&connect_timeout=10"
-# - ServiceSettings.SiteURL should be: "https://mattermost.iaqi.org"
+# - ServiceSettings.SiteURL should be: "https://mm.iaqi.org"
 # - FileSettings.Directory should be: "./data/"
 ```
 
@@ -304,7 +304,7 @@ echo "Data: $BACKUP_DIR/data/mattermost_data_backup_$BACKUP_DATE.tar.gz"
 echo "Config: $BACKUP_DIR/config/mattermost_config_backup_$BACKUP_DATE.tar.gz"
 
 # Access Mattermost web interface
-echo "Visit: https://mattermost.iaqi.org"
+echo "Visit: https://mm.iaqi.org"
 ```
 
 ## Cloud Backup Management

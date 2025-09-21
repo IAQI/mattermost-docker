@@ -28,7 +28,7 @@ cp env.IAQI .env
 
 # Review the .env configuration file
 # Key settings configured:
-# - DOMAIN=mattermost.iaqi.org
+# - DOMAIN=mm.iaqi.org
 # - POSTGRES credentials
 # - SSL certificate paths
 # - Mattermost image and settings
@@ -40,7 +40,7 @@ The `.env` file was configured with:
 
 ```bash
 # Domain configuration
-DOMAIN=mattermost.iaqi.org
+DOMAIN=mm.iaqi.org
 
 # Database settings
 POSTGRES_USER=mmuser
@@ -61,12 +61,22 @@ MM_SERVICESETTINGS_SITEURL=https://${DOMAIN}
 
 ### 3. Issue Initial Let's Encrypt Certificate
 
+The initial SSL certificate needs to be obtained before starting the services:
+
 ```bash
 # Stop any running containers to free port 80
 sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml down
 
 # Issue certificate using the provided script
-./scripts/issue-certificate.sh -d mattermost.iaqi.org -o /home/ubuntu/docker/certs
+./scripts/issue-certificate.sh -d mm.iaqi.org -o /home/ubuntu/docker/certs
+```
+
+```bash
+# Stop any running containers to free port 80
+sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml down
+
+# Issue certificate using the provided script
+./scripts/issue-certificate.sh -d mm.iaqi.org -o /home/ubuntu/docker/certs
 ```
 
 ### 4. Fix Certificate Permissions
@@ -95,6 +105,42 @@ sudo docker logs nginx_mattermost
 sudo docker logs docker-mattermost-1
 sudo docker logs docker-postgres-1
 ```
+
+### 6. Certificate renewal
+
+### Automatic Certificate Renewal Setup
+
+After the initial certificate is issued, automatic renewal is configured using the `scripts/renew-certificate.sh` script. 
+
+Add the following crontab with sudo rights:
+```bash
+30 0 * * * /home/ubuntu/docker/scripts/renew-certificate.sh >> /home/ubuntu/logs/certbot-renewal.log 2>&1
+```
+
+This script:
+
+1. Uses the webroot authenticator method, which doesn't require stopping Mattermost
+2. Checks certificates daily at 00:30
+3. Only restarts nginx if a renewal actually occurs
+4. Logs all operations to `/home/ubuntu/logs/certbot-renewal.log`
+
+
+The renewal configuration includes:
+- Correct permissions and paths
+- Shared webroot volume for authentication
+- Proper nginx integration
+- Logging and monitoring
+
+You can monitor the renewal process by checking the logs:
+```bash
+tail -f /home/ubuntu/logs/certbot-renewal.log
+```
+
+To test the renewal process without making any changes:
+```bash
+sudo /home/ubuntu/docker/scripts/renew-certificate.sh --dry-run
+```
+
 
 ## Troubleshooting Issues Encountered
 
@@ -128,7 +174,7 @@ Error finalizing order :: rechecking caa: During secondary validation: Secondary
 **Current Status:** 
 - Certificate valid until October 19, 2025
 - Need to fix CAA DNS records for future renewals (see CAA Records section below)
-- Clean up broken renewal config: `sudo rm /home/ubuntu/docker/certs/etc/letsencrypt/renewal/mattermost.iaqi.org.conf`
+- Clean up broken renewal config: `sudo rm /home/ubuntu/docker/certs/etc/letsencrypt/renewal/mm.iaqi.org.conf`
 
 ## Understanding CAA Records
 
@@ -169,7 +215,7 @@ sudo docker compose ps -a
 
 ### 7. Access Mattermost
 
-- **URL:** https://mattermost.iaqi.org
+- **URL:** https://mm.iaqi.org
 - **SSL:** Let's Encrypt certificate (valid until Oct 19, 2025)
 - **Reverse Proxy:** nginx handling SSL termination
 - **Database:** PostgreSQL 13-alpine
@@ -236,7 +282,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml pull
 sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
 
 # Check certificate expiry
-sudo openssl x509 -in ./certs/etc/letsencrypt/live/mattermost.iaqi.org/fullchain.pem -noout -dates
+sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org/fullchain.pem -noout -dates
 ```
 
 ## Configuration Management
@@ -401,5 +447,5 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml logs --tai
 
 **Setup completed successfully on:** July 22, 2025  
 **Mattermost version:** 10.5.2 Enterprise Edition  
-**Domain:** mattermost.iaqi.org  
+**Domain:** mm.iaqi.org  
 **SSL Status:** ✅ Valid until October 19, 2025
