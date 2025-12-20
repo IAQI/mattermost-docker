@@ -51,3 +51,43 @@ sudo docker run --rm --name certbot \
 
 This command can be called with a systemd timer on a regulary basis (e.g. once a day). Please take a look at the
 *contrib/systemd* folder.
+
+### 4. Post-renewal hook to automatically restart nginx
+
+When certificates are renewed, nginx needs to be restarted to load the new certificates. A deploy hook has been configured at `certs/etc/letsencrypt/renewal-hooks/deploy/restart-nginx.sh` that automatically restarts the nginx container after successful certificate renewal.
+
+The hook script:
+- Runs only when certificates are actually renewed (not on every renewal check)
+- Logs the renewal event to `/home/ubuntu/logs/certbot-renewal.log`
+- Restarts the nginx container using `docker compose restart nginx`
+
+This ensures the site doesn't become inaccessible due to expired certificates even if nginx hasn't been restarted since the last renewal.
+
+```
+#!/bin/bash
+
+# Post-renewal hook to restart nginx after certificate renewal
+# This script is automatically executed by certbot after successful certificate renewal
+
+set -euo pipefail
+
+LOG_FILE="/home/ubuntu/logs/certbot-renewal.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+log "Certificate renewed for domain: ${RENEWED_DOMAINS:-unknown}"
+log "Restarting nginx to load new certificate..."
+
+# Change to docker directory and restart nginx
+cd /home/ubuntu/docker
+
+# Restart nginx container using docker compose
+if docker compose -f docker-compose.yml -f docker-compose.nginx.yml restart nginx >> "$LOG_FILE" 2>&1; then
+    log "Nginx restarted successfully"
+else
+    log "ERROR: Failed to restart nginx"
+    exit 1
+fi
+```
