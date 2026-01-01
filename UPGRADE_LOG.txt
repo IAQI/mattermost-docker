@@ -1,0 +1,65 @@
+=============================================================================
+MATTERMOST UPGRADE LOG - January 1, 2026
+=============================================================================
+
+UPGRADE SUMMARY
+---------------
+From Version: 10.5.2
+To Version:   10.11.9
+Date:         January 1, 2026
+Duration:     ~3 minutes downtime
+Status:       ✓ Successful
+
+STEPS EXECUTED
+--------------
+1. ✓ Updated Ubuntu system packages (already up to date)
+2. ✓ Verified current version (10.5.2)
+3. ✓ Checked system resources (5GB disk, 600MB available RAM, 2GB swap)
+4. ✓ Verified recent backups exist (daily backup from Jan 1, 2:00 AM)
+5. ✓ Created pre-upgrade backup (/home/ubuntu/backups/daily/20260101_153951)
+6. ✓ Updated MATTERMOST_IMAGE_TAG to 10.11.9 in .env file
+7. ✓ Enabled maintenance mode
+8. ✓ Enabled config editing mode
+9. ✓ Pulled new Docker image (10.11.9)
+10. ✓ Stopped mattermost and nginx services
+11. ✓ Restored config file permissions
+12. ✓ Started services with new version
+13. ✓ Disabled maintenance mode
+14. ✓ Verified upgrade successful
+15. ✓ Health checks passed
+
+POST-UPGRADE STATUS
+-------------------
+- Mattermost Version: 10.11.9 Enterprise Edition
+- Build Number: 20127898790
+- Build Date: Fri Dec 12 10:16:56 UTC 2025
+- All containers: Healthy
+- Web access: ✓ https://mm.iaqi.org responding (HTTP 200)
+- Resource usage: Normal (Mattermost ~500MB, 25% RAM)
+- No errors in logs
+
+DOCUMENTATION UPDATES
+---------------------
+- ✓ UPGRADE_GUIDE.md: Added upgrade history, fixed backup script path, 
+                      added maintenance mode steps, updated version to 10.11.9,
+                      added system updates as step 1, added reboot guidance
+- ✓ SETUP_GUIDE.md: Updated version to 10.11.9, added last upgrade date
+- ✓ RESTORE_GUIDE.md: Updated target version to 10.11.9
+
+NOTES
+-----
+- Maintenance mode successfully prevented user access during upgrade
+- Database migrations completed without issues
+- No configuration changes required
+- Backup cleanup issue during automated backup (non-critical)
+- System updates: All packages already up to date
+- Kernel updates pending (reboot deferred - system stable)
+
+NEXT STEPS
+----------
+- Monitor system for 24 hours
+- Test user functionality
+- Reboot server during next low-usage period to apply kernel updates
+- Plan next upgrade when 10.12.x or 11.x is released
+
+=============================================================================

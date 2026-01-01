@@ -41,9 +41,36 @@ df -h /home/ubuntu
 uptime
 ```
 
+## System Updates
+
+### 1. Update Ubuntu System
+
+**Run system updates alongside Mattermost upgrades:**
+
+```bash
+# Update package lists
+sudo apt update
+
+# View what will be updated
+sudo apt list --upgradable
+
+# Apply all updates
+sudo apt upgrade -y
+
+# Check if reboot needed (defer until after Mattermost upgrade)
+if [ -f /var/run/reboot-required ]; then
+    echo "⚠️  Reboot will be needed after Mattermost upgrade"
+    cat /var/run/reboot-required.pkgs
+else
+    echo "✓ No reboot required"
+fi
+```
+
+**Note:** If kernel updates were installed, plan to reboot after completing the Mattermost upgrade.
+
 ## Backup Before Upgrade
 
-### 1. Create Full Backup
+### 2. Create Full Backup
 
 **Automated backup (recommended):**
 ```bash
@@ -76,7 +103,7 @@ cp /home/ubuntu/docker/volumes/app/mattermost/config/config.json "$BACKUP_DIR/"
 du -sh "$BACKUP_DIR"
 ```
 
-### 2. Verify Backup Integrity
+### 3. Verify Backup Integrity
 
 ```bash
 # Check database backup
@@ -90,7 +117,7 @@ cat "$BACKUP_DIR/config.json" | python3 -m json.tool > /dev/null && echo "✓ Va
 
 ## Upgrade Process
 
-### 3. Update Version in .env File
+### 4. Update Version in .env File
 
 ```bash
 # Navigate to docker directory
@@ -105,7 +132,7 @@ nano .env
 # Example: MATTERMOST_IMAGE_TAG=10.6.0
 ```
 
-### 4. Enable Maintenance Mode
+### 5. Enable Maintenance Mode
 
 ```bash
 # Enable maintenance mode to show users a maintenance page
@@ -119,7 +146,7 @@ sudo docker compose ps | grep nginx
 sudo docker exec nginx_mattermost nginx -s reload
 ```
 
-### 5. Enable Config Editing Mode
+### 6. Enable Config Editing Mode
 
 ```bash
 # Allow editing of config file
@@ -129,7 +156,7 @@ sudo docker exec nginx_mattermost nginx -s reload
 ./scripts/config-manager.sh status
 ```
 
-### 6. Pull New Docker Image
+### 7. Pull New Docker Image
 
 ```bash
 # Pull the new Mattermost image
@@ -139,7 +166,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml pull matte
 sudo docker images | grep mattermost
 ```
 
-### 7. Stop Services Gracefully
+### 8. Stop Services Gracefully
 
 ```bash
 # Stop Mattermost and nginx (keep database running)
@@ -149,7 +176,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml stop matte
 sudo docker compose ps
 ```
 
-### 8. Restore Config Permissions
+### 9. Restore Config Permissions
 
 ```bash
 # Restore proper ownership before starting new container
@@ -159,7 +186,7 @@ sudo docker compose ps
 ./scripts/config-manager.sh status
 ```
 
-### 9. Start Updated Services
+### 10. Start Updated Services
 
 ```bash
 # Start all services with new version
@@ -169,7 +196,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
 sleep 30
 ```
 
-### 10. Disable Maintenance Mode
+### 11. Disable Maintenance Mode
 
 ```bash
 # Remove maintenance mode file
@@ -180,7 +207,7 @@ rm nginx/conf.d/.maintenance
 sudo docker exec nginx_mattermost nginx -s reload
 ```
 
-### 11. Verify Upgrade
+### 12. Verify Upgrade
 
 ```bash
 # Check Mattermost version
@@ -195,7 +222,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml ps
 
 ## Post-Upgrade Verification
 
-### 12. System Health Checks
+### 13. System Health Checks
 
 ```bash
 # Check all containers are running
@@ -213,7 +240,7 @@ sudo docker stats --no-stream
 sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml logs --tail=50 mattermost | grep -i error
 ```
 
-### 13. Functional Testing
+### 14. Functional Testing
 
 **Admin Console:**
 - [ ] Login to admin account
@@ -234,7 +261,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml logs --tai
 - [ ] Check plugin functionality
 - [ ] Test mobile app connectivity
 
-### 14. Performance Monitoring
+### 15. Performance Monitoring
 
 ```bash
 # Monitor system resources for 10 minutes after upgrade
@@ -246,6 +273,73 @@ watch -n 30 'date && free -h && echo "---" && sudo docker stats --no-stream'
 # Monitor logs for repeated errors
 sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml logs -f --tail=100
 ```
+
+### 16. Reboot System (If Required)
+
+**If system updates installed kernel packages:**
+
+```bash
+# Check if reboot is required
+if [ -f /var/run/reboot-required ]; then
+    echo "Reboot required - schedule during low-usage time"
+    
+    # When ready to reboot:
+    # 1. Enable maintenance mode (optional)
+    cd /home/ubuntu/docker
+    touch nginx/conf.d/.maintenance
+    sudo docker exec nginx_mattermost nginx -s reload
+    
+    # 2. Reboot
+    sudo reboot
+    
+    # 3. After reboot, verify services auto-started:
+    # docker ps
+    # curl -I https://mm.iaqi.org
+    
+    # 4. Disable maintenance mode
+    # rm nginx/conf.d/.maintenance
+    # sudo docker exec nginx_mattermost nginx -s reload
+fi
+```
+
+**Note:** Docker containers configured with `restart: unless-stopped` will automatically restart after system reboot.
+
+## Post-Upgrade Cleanup (Optional)
+
+After a successful upgrade, you can free up disk space by removing old Docker images and logs:
+
+### Cleanup Commands
+
+```bash
+# 1. Remove old Mattermost image (saves ~1GB)
+# Replace version number with the old version you just upgraded from
+sudo docker image rm mattermost/mattermost-enterprise-edition:10.5.2
+
+# 2. Clean up system logs (saves ~1.5GB, keeps last 7 days)
+sudo journalctl --vacuum-time=7d
+
+# 3. Remove old weekly backups (optional, keeps last 2)
+# Only remove backups older than 1 month
+ls -lt /home/ubuntu/backups/weekly/ | tail -n +3 | awk '{print $9}' | xargs -I {} rm -rf /home/ubuntu/backups/weekly/{}
+
+# 4. Docker cleanup - remove unused data
+sudo docker system prune -f
+
+# 5. Check disk space after cleanup
+df -h /
+```
+
+### Disk Usage Check
+
+```bash
+# View what's using disk space
+sudo du -h --max-depth=1 / 2>/dev/null | sort -hr | head -10
+
+# Check Docker disk usage
+sudo docker system df
+```
+
+**Expected space savings:** 2-3GB total
 
 ## Rollback Procedure
 
