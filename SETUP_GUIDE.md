@@ -53,7 +53,7 @@ KEY_PATH=./certs/etc/letsencrypt/live/${DOMAIN}/privkey.pem
 
 # Mattermost configuration
 MATTERMOST_IMAGE=mattermost-enterprise-edition
-MATTERMOST_IMAGE_TAG=10.5.2
+MATTERMOST_IMAGE_TAG=10.11.9
 MM_SERVICESETTINGS_SITEURL=https://${DOMAIN}
 ```
 
@@ -446,6 +446,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml logs --tai
 ---
 
 **Setup completed successfully on:** July 22, 2025  
-**Mattermost version:** 10.5.2 Enterprise Edition  
+**Mattermost version:** 10.11.9 Enterprise Edition  
+**Last Upgrade:** January 1, 2026 (from 10.5.2 to 10.11.9)  
 **Domain:** mm.iaqi.org  
 **SSL Status:** ✅ Valid until October 19, 2025

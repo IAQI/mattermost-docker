@@ -556,4 +556,4 @@ sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
 
 **Restoration Guide Updated:** August 1, 2025  
 **Backup Source:** Local `/home/ubuntu/backups/{daily,weekly}/` and SwissBackup `swissbackup:mattermost-backups/{daily,weekly}/`  
-**Target Installation:** Mattermost 10.5.2 Enterprise Edition
+**Target Installation:** Mattermost 10.11.9 Enterprise Edition
