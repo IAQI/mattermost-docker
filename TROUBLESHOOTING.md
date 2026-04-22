@@ -300,10 +300,13 @@ sudo docker exec docker-postgres-1 psql -U mmuser -d mattermost -c "SELECT query
 **Check Certificate Status:**
 ```bash
 # Check certificate expiry
-sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org-0001/fullchain.pem -noout -dates
+sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org/fullchain.pem -noout -dates
 
-# Test SSL connection
+# Check certificate currently served to clients
 openssl s_client -connect mm.iaqi.org:443 -servername mm.iaqi.org < /dev/null
+
+# If renewal completed but old cert is still served, reload nginx
+sudo docker compose -f docker-compose.yml -f docker-compose.nginx.yml restart nginx
 
 # Check nginx configuration
 sudo docker exec nginx_mattermost nginx -t
@@ -389,7 +392,10 @@ df -h / | tail -1
 
 # Certificate expiry
 echo -e "\nSSL Certificate:"
-sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org-0001/fullchain.pem -noout -enddate
+sudo openssl x509 -in ./certs/etc/letsencrypt/live/mm.iaqi.org/fullchain.pem -noout -enddate
+
+# Certificate currently served publicly
+echo | openssl s_client -connect mm.iaqi.org:443 -servername mm.iaqi.org 2>/dev/null | openssl x509 -noout -enddate
 
 echo "=== End Health Check ==="
 ```
