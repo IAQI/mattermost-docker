@@ -28,6 +28,7 @@ BACKUP_DAILY_DIR="${BACKUP_BASE_DIR}/daily"
 BACKUP_WEEKLY_DIR="${BACKUP_BASE_DIR}/weekly"
 LOGS_DIR="${HOME_DIR}/logs"
 LOG_FILE="${LOGS_DIR}/mattermost-backup.log"
+ALERT_SCRIPT="${SCRIPT_DIR}/send-email-alert.py"
 VERBOSE=""
 ALLOW_ROOT=""
 
@@ -66,9 +67,26 @@ log() {
     fi
 }
 
+send_alert() {
+    local subject="$1"
+    local body="$2"
+
+    if [[ -f "$ALERT_SCRIPT" ]] && command -v python3 >/dev/null 2>&1; then
+        python3 "$ALERT_SCRIPT" --subject "$subject" --body "$body" >/dev/null 2>&1 || \
+            log "WARN" "Failed to send alert email"
+    fi
+}
+
 # Error handling
 error_exit() {
-    log "ERROR" "$1"
+    local error_message="$1"
+    log "ERROR" "$error_message"
+
+    local host_name
+    host_name="$(hostname -f 2>/dev/null || hostname)"
+    send_alert \
+        "Backup FAILED on ${host_name}" \
+        "Mattermost backup failed.\n\nHost: ${host_name}\nTime: $(date '+%Y-%m-%d %H:%M:%S %Z')\nError: ${error_message}\nLog: ${LOG_FILE}"
     
     # Disable maintenance mode if it was enabled
     rm -f "$DOCKER_DIR/nginx/conf.d/.maintenance" 2>/dev/null || true
@@ -264,7 +282,7 @@ restart_services() {
                 break
             fi
             sleep 2
-            ((retries++))
+            ((retries+=1))
         done
         
         # Disable maintenance mode
@@ -410,7 +428,7 @@ cleanup_old_backups() {
             local dir_name=$(basename "$dir")
             
             if rm -rf "$dir"; then
-                ((deleted_daily++))
+                ((deleted_daily+=1))
                 log "INFO" "Deleted old daily backup: $dir_name"
             else
                 log "WARN" "Failed to delete daily backup: $dir_name"
@@ -437,7 +455,7 @@ cleanup_old_backups() {
             local dir_name=$(basename "$dir")
             
             if rm -rf "$dir"; then
-                ((deleted_weekly++))
+                ((deleted_weekly+=1))
                 log "INFO" "Deleted old weekly backup: $dir_name"
             else
                 log "WARN" "Failed to delete weekly backup: $dir_name"

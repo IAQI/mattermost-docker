@@ -25,7 +25,21 @@ Comprehensive backup script for the Mattermost installation.
 - Creates timestamped backup directories
 - Supports both daily and weekly backups
 - Handles maintenance mode during backup
+- Sends email alerts on backup failures when SMTP alerting is configured
 - Usage: Typically run via cron using `setup-backup-cron.sh`
+
+### `send-email-alert.py`
+Reusable SMTP alert helper for operational scripts.
+- Reads SMTP settings from `docker/.env`
+- Used by backup and health-check scripts
+- Usage: `python3 send-email-alert.py --subject "..." --body "..."`
+
+### `site-health-check.sh`
+Checks whether the Mattermost site is reachable and sends alert emails on outages.
+- Uses `SITE_HEALTH_URL` or `MM_SERVICESETTINGS_SITEURL` from `docker/.env`
+- Tracks state to avoid sending repeated alerts every run
+- Sends recovery email when the site comes back up
+- Usage: `./site-health-check.sh`
 
 ### `check-all-containers.py`
 Python script for inspecting Swift object storage containers.
@@ -121,6 +135,19 @@ Most scripts log their operations to `/home/ubuntu/logs/` with specific log file
 - Certificate operations: `certbot-renewal.log`
 - Backup operations: `mattermost-backup.log`
 - Rclone operations: `rclone-backup.log`
+- Site monitor: `site-health.log`
+
+## Email Alerting
+
+To enable email alerts, set these values in `docker/.env`:
+- `ALERT_EMAIL_ENABLED=true`
+- `ALERT_SMTP_HOST`, `ALERT_SMTP_PORT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASS`
+- `ALERT_SMTP_FROM`, `ALERT_SMTP_TO`
+- Optional: `ALERT_SMTP_TLS` and `ALERT_SUBJECT_PREFIX`
+
+Example cron for site monitoring every 5 minutes:
+
+`*/5 * * * * /home/ubuntu/docker/scripts/site-health-check.sh >> /home/ubuntu/logs/site-health.log 2>&1`
 
 ## Script Dependencies
 
